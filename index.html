@@ -250,6 +250,7 @@
     <div class="quickbtns">
       <button class="btn ghost" id="projSaveBtn" title="save everything — files, labels, styles, tabs — as one .json project">save project</button>
       <button class="btn ghost" id="projOpenBtn" title="open a saved .json project (replaces the current session)">open project</button>
+      <button class="btn ghost" id="projNewBtn" title="clear files, tabs and the autosaved session">new project</button>
     </div>
 
     <h2>Traces <span class="rule"></span></h2>
@@ -2324,19 +2325,21 @@ function saveProject(){
   saveTextFile('sparam_project_'+new Date().toISOString().slice(0,10)+'.json',
     JSON.stringify(buildProject(), null, 1));
 }
-function loadProjectText(text){
+function loadProjectText(text, opts){
+  opts=opts||{};
+  const say=(m,st)=>{ if (!opts.quiet) toast(m,st); };
   let p;
   try { p=JSON.parse(text); }
-  catch(e){ toast('✗ not a valid project file (JSON parse failed)', true); return false; }
-  if (!p || p.format!=='sparam-studio-project'){ toast('✗ not an S-Param Studio project file', true); return false; }
+  catch(e){ say('✗ not a valid project file (JSON parse failed)', true); return false; }
+  if (!p || p.format!=='sparam-studio-project'){ say('✗ not an S-Param Studio project file', true); return false; }
   if (!Array.isArray(p.files) || !Array.isArray(p.tabs) || !p.tabs.length){
-    toast('✗ project file is missing its files/tabs sections', true); return false;
+    say('✗ project file is missing its files/tabs sections', true); return false;
   }
   // parse EVERY file first — a project loads whole or not at all
   const newFiles=[];
   for (const pf of p.files){
     const parsed=SNP.parseTouchstone(pf.name, pf.text);
-    if (!parsed.ok){ toast('✗ project load aborted — '+pf.name+': '+parsed.error, true); return false; }
+    if (!parsed.ok){ say('✗ project load aborted — '+pf.name+': '+parsed.error, true); return false; }
     newFiles.push({ id:'f'+(++fileCounter), name:pf.name, parsed, text:String(pf.text),
       label:(typeof pf.label==='string'&&pf.label)?pf.label:null,
       dashIdx: Number.isInteger(pf.dashIdx)? ((pf.dashIdx%FILE_DASHES.length)+FILE_DASHES.length)%FILE_DASHES.length : 0 });
@@ -2382,7 +2385,7 @@ function loadProjectText(text){
   editingLabel=null; editingTab=null;
   if (isFinite(p.sidebarWidth)) setSidebarWidth(p.sidebarWidth);
   syncHeaderControls(); renderAll();
-  toast('project loaded — '+newFiles.length+' file(s), '+tabs.length+' tab(s)', false);
+  say('project loaded — '+newFiles.length+' file(s), '+tabs.length+' tab(s)', false);
   return true;
 }
 $('projSaveBtn').onclick=saveProject;
@@ -2396,6 +2399,7 @@ $('projInput').addEventListener('change',async ev=>{
 // ---------- draggable sidebar ----------
 function setSidebarWidth(w){
   $('side').style.width=Math.max(230, Math.min(640, w))+'px';
+  scheduleAutosave();
 }
 $('splitbar').addEventListener('mousedown',ev=>{
   ev.preventDefault();
@@ -2414,12 +2418,94 @@ $('splitbar').addEventListener('mousedown',ev=>{
   window.addEventListener('mouseup',up);
 });
 
+// ---------- session autosave (IndexedDB — survives an accidental refresh) ----------
+const IDB_NAME='sparam-studio', IDB_STORE='session';
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const rq=indexedDB.open(IDB_NAME,1);
+    rq.onupgradeneeded=()=>rq.result.createObjectStore(IDB_STORE);
+    rq.onsuccess=()=>res(rq.result);
+    rq.onerror=()=>rej(rq.error);
+  });
+}
+function idbPut(key,val){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).put(val,key);
+    tx.oncomplete=()=>{ db.close(); res(); };
+    tx.onerror=()=>{ db.close(); rej(tx.error); };
+  }));
+}
+function idbGet(key){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const rq=db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(key);
+    rq.onsuccess=()=>{ db.close(); res(rq.result); };
+    rq.onerror=()=>{ db.close(); rej(rq.error); };
+  }));
+}
+function idbDel(key){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).delete(key);
+    tx.oncomplete=()=>{ db.close(); res(); };
+    tx.onerror=()=>{ db.close(); rej(tx.error); };
+  }));
+}
+let autosaveTimer=null, autosaveEnabled=false;
+function scheduleAutosave(){
+  if (!autosaveEnabled) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer=setTimeout(autosaveNow, 800);
+}
+function autosaveNow(){
+  if (!autosaveEnabled) return;
+  clearTimeout(autosaveTimer);
+  try {
+    // an intentionally emptied session clears the autosave too — consistent on refresh
+    const payload = state.files.length ? JSON.stringify(buildProject()) : null;
+    (payload!=null ? idbPut('autosave', payload) : idbDel('autosave')).catch(()=>{});
+  } catch(_){ /* autosave must never break the app */ }
+}
+// a refresh/tab-close mid-debounce must not lose the last edits
+document.addEventListener('visibilitychange',()=>{ if (document.visibilityState==='hidden') autosaveNow(); });
+window.addEventListener('pagehide', autosaveNow);
+function newProject(){
+  if (state.files.length || state.tabs.length>1){
+    if (!confirm('Start a new project? Current files, tabs and the autosaved session will be cleared.')) return;
+  }
+  state.files=[];
+  state.tabs=[]; tabCounter=0;
+  state.tabs=[newTab('Plot 1')];
+  state.activeTabId=state.tabs[0].id;
+  dashCounter=0; derivedCache.clear(); colorMap.clear();
+  editingLabel=null; editingTab=null;
+  idbDel('autosave').catch(()=>{});
+  syncHeaderControls(); renderAll();
+}
+$('projNewBtn').onclick=newProject;
+(async ()=>{
+  try {
+    const raw=await idbGet('autosave');
+    window.__restoreTrace='read:'+(raw?raw.length:'none');
+    // only restore into an untouched session — never clobber files the user
+    // managed to import before this async read resolved
+    if (raw && !state.files.length){
+      const ok=loadProjectText(raw,{quiet:true});
+      window.__restoreTrace+=' ok:'+ok;
+      if (ok) toast('↺ previous session restored — "new project" starts clean', false);
+      else idbDel('autosave').catch(()=>{});   // stale/corrupt autosave: drop it quietly
+    }
+  } catch(e){ window.__restoreTrace='ERR:'+String(e&&e.stack||e).slice(0,200); }
+  autosaveEnabled=true;
+})();
+
 // ---------- render all ----------
 function renderAll(){
   renderTabs();
   renderFiles();
   renderMatrix();
   renderPlot();
+  scheduleAutosave();
 }
 new ResizeObserver(()=>{ if (document.body.contains(svg)) renderPlot(); }).observe($('plotwrap'));
 renderAll();
@@ -2435,6 +2521,7 @@ window.SNPApp={
   plotToPngBlob, plotToPdfBlob,
   cycleDash, setFileLabel:(fid,label)=>{ const f=fileById(fid); if (f){ f.label=label||null; renderAll(); } },
   addTab, switchTab, closeTab, dupTab, curTab, buildProject, saveProject, loadProjectText, setSidebarWidth,
+  newProject, autosaveNow, idbGet, idbDel,
 };
 })();
 </script>
