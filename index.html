@@ -1,0 +1,2136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>S-Param Studio</title>
+<!--ART_STYLE_START-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111a2b; --panel2:#0e1626; --line:#233047; --line2:#1a2436;
+    --ink:#dbe4f3; --ink2:#8fa3c0; --ink3:#5e7092; --accent:#3b82f6; --danger:#ef4444;
+    --grid:#1c2839; --axis:#3a4a66;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:13px/1.45 "IBM Plex Mono", "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    display:flex; align-items:center; gap:12px; padding:8px 14px;
+    background:var(--panel); border-bottom:1px solid var(--line); flex:0 0 auto; flex-wrap:wrap;
+  }
+  header h1{ font-size:14px; margin:0; font-weight:700; letter-spacing:.4px; }
+  header h1 .dot{ color:var(--accent); }
+  header .spacer{ flex:1; }
+  .btn{
+    background:#1b2a44; color:var(--ink); border:1px solid #2c4266; border-radius:6px;
+    padding:5px 11px; font:inherit; cursor:pointer; white-space:nowrap;
+  }
+  .btn:hover{ background:#24365a; }
+  .btn.primary{ background:#1d4ed8; border-color:#3b82f6; }
+  .btn.primary:hover{ background:#2563eb; }
+  .btn.ghost{ background:transparent; border-color:var(--line); color:var(--ink2); }
+  .btn.ghost:hover{ color:var(--ink); border-color:#2c4266; }
+  select,input[type=text],input[type=number]{
+    background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+    border-radius:5px; padding:4px 7px; font:inherit;
+  }
+  select:focus,input:focus{ outline:1px solid var(--accent); }
+  label.inline{ display:flex; align-items:center; gap:6px; color:var(--ink2); white-space:nowrap; }
+  main{ flex:1; display:flex; min-height:0; }
+  aside{
+    width:330px; flex:0 0 330px; background:var(--panel); border-right:1px solid var(--line);
+    overflow-y:auto; padding:10px 12px 24px;
+  }
+  aside h2{
+    font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--ink3);
+    margin:16px 0 6px; font-weight:700; display:flex; align-items:center; gap:8px;
+  }
+  aside h2:first-child{ margin-top:2px; }
+  aside h2 .rule{ flex:1; height:1px; background:var(--line2); }
+  .filerow{
+    display:flex; align-items:center; gap:8px; padding:6px 6px; border:1px solid var(--line2);
+    border-radius:6px; margin-bottom:5px; background:var(--panel2);
+  }
+  .filerow .stylesample{ flex:0 0 34px; }
+  .filerow .fmeta{ flex:1; min-width:0; }
+  .filerow .fname{
+    font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12.5px;
+  }
+  .filerow .fsub{ color:var(--ink3); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .filerow .warn{ color:#f59e0b; cursor:help; flex:0 0 auto; }
+  .filerow .rm{
+    flex:0 0 auto; background:none; border:none; color:var(--ink3); cursor:pointer; font:inherit;
+    font-size:14px; padding:2px 5px; border-radius:4px;
+  }
+  .filerow .rm:hover{ color:var(--danger); background:#2a1520; }
+  .empty{ color:var(--ink3); font-size:12px; padding:6px 2px; }
+  #dropzone{
+    border:1.5px dashed #2c4266; border-radius:8px; padding:10px; text-align:center;
+    color:var(--ink3); cursor:pointer; margin-bottom:8px; transition:border-color .15s, color .15s;
+  }
+  #dropzone:hover,#dropzone.drag{ border-color:var(--accent); color:var(--ink2); }
+  table.matrix{ border-collapse:collapse; width:100%; }
+  table.matrix th, table.matrix td{
+    border:1px solid var(--line2); padding:3px 6px; text-align:center; font-size:12px;
+  }
+  table.matrix th{ background:var(--panel2); color:var(--ink2); font-weight:600; cursor:pointer; user-select:none; }
+  table.matrix th:hover{ color:var(--ink); }
+  table.matrix th.corner{ cursor:default; color:var(--ink3); font-weight:400; }
+  table.matrix td{ cursor:pointer; }
+  table.matrix td:hover{ background:#16233b; }
+  table.matrix td.na{ background:#0d1422; cursor:default; color:var(--ink3); }
+  table.matrix input[type=checkbox]{ accent-color:var(--accent); cursor:pointer; }
+  .chip{ display:inline-block; width:10px; height:10px; border-radius:2.5px; margin-right:6px; vertical-align:-1px; }
+  .quickbtns{ display:flex; gap:5px; margin-top:6px; flex-wrap:wrap; }
+  .quickbtns .btn{ padding:2.5px 8px; font-size:11.5px; }
+  .fieldgrid{ display:grid; grid-template-columns:auto 1fr 1fr auto; gap:5px 7px; align-items:center; }
+  .fieldgrid .lbl{ color:var(--ink2); font-size:12px; }
+  .fieldgrid input{ width:100%; min-width:0; }
+  .fieldgrid .mini{ padding:3px 7px; font-size:11px; }
+  .markerrow{
+    display:flex; align-items:center; gap:7px; padding:4px 6px; border-radius:5px;
+    background:var(--panel2); border:1px solid var(--line2); margin-bottom:4px; font-size:12px;
+  }
+  .markerrow .mlab{ flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .markerrow .rm{ background:none;border:none;color:var(--ink3);cursor:pointer;font:inherit; }
+  .markerrow .rm:hover{ color:var(--danger); }
+  .deltarow{ color:var(--ink2); font-size:12px; padding:3px 6px; border-left:2px solid var(--accent); margin-top:6px; }
+  #plotwrap{ flex:1; position:relative; min-width:0; display:flex; flex-direction:column; }
+  #plot{ flex:1; width:100%; height:100%; display:block; cursor:crosshair; }
+  #hintbar{
+    flex:0 0 auto; padding:4px 14px; color:var(--ink3); font-size:11px;
+    border-top:1px solid var(--line2); background:var(--panel2);
+    display:flex; gap:18px; flex-wrap:wrap;
+  }
+  #tooltip{
+    position:absolute; pointer-events:none; display:none; z-index:20;
+    background:rgba(10,16,28,.94); border:1px solid #2c4266; border-radius:7px;
+    padding:7px 10px; font-size:12px; max-width:340px; box-shadow:0 6px 20px rgba(0,0,0,.5);
+  }
+  #tooltip .tfreq{ color:var(--ink2); margin-bottom:4px; font-weight:600; }
+  #tooltip .trow{ display:flex; align-items:center; gap:7px; white-space:nowrap; padding:1px 0; }
+  #tooltip .trow.focus{ font-weight:700; }
+  #tooltip .trow .val{ margin-left:auto; padding-left:14px; }
+  #tooltip .swatch{ width:16px; height:0; border-top-width:2.5px; border-top-color:currentColor; flex:0 0 auto; }
+  #toasts{ position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:40; display:flex; flex-direction:column; gap:6px; max-width:70%; }
+  .toast{
+    background:#122036; border:1px solid #2c4266; border-radius:7px; padding:7px 12px;
+    font-size:12px; box-shadow:0 6px 18px rgba(0,0,0,.45); cursor:pointer;
+  }
+  .toast.err{ border-color:#7f1d1d; background:#2a1216; }
+  .modalback{
+    position:fixed; inset:0; background:rgba(4,8,16,.62); z-index:60;
+    display:flex; align-items:center; justify-content:center;
+  }
+  /* author display:flex beats the UA's [hidden]{display:none} — guard it explicitly,
+     or the backdrop veils the whole app from first paint (real shipped bug) */
+  .modalback[hidden]{ display:none; }
+  .modal{
+    background:var(--panel); border:1px solid #2c4266; border-radius:10px;
+    width:min(94vw,680px); max-height:86vh; overflow-y:auto;
+    padding:16px 20px 18px; box-shadow:0 14px 44px rgba(0,0,0,.55);
+  }
+  .modal h3{ margin:0 0 10px; font-size:14px; }
+  .modal h4{ margin:14px 0 4px; font-size:12.5px; color:var(--ink); }
+  .modal p{ color:var(--ink2); font-size:12.5px; line-height:1.55; margin:6px 0; }
+  .modal p b, .modal li b{ color:var(--ink); }
+  .modal li{ color:var(--ink2); font-size:12.5px; line-height:1.5; margin:3px 0; }
+  .modal pre{
+    background:var(--panel2); border:1px solid var(--line2); border-radius:6px;
+    padding:8px 11px; overflow-x:auto; color:var(--ink); font-size:12.5px; margin:8px 0;
+  }
+  .mergetab{ border-collapse:collapse; width:100%; margin-top:8px; }
+  .mergetab th,.mergetab td{ border:1px solid var(--line2); padding:4px 7px; font-size:12px; text-align:left; }
+  .mergetab th{ color:var(--ink3); font-weight:600; }
+  .mergetab input[type=number]{ width:4.4em; }
+  .mergetab .mname{ max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .modbtns{ display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+  .moderr{ color:#f87171; font-size:12px; min-height:16px; margin-top:8px; white-space:pre-wrap; }
+  .axbtn{
+    width:26px; height:20px; padding:0; font:inherit; font-size:11px; border-radius:4px;
+    border:1px solid var(--line); background:var(--panel2); color:var(--ink3); cursor:pointer;
+  }
+  .axbtn.l{ background:#1d4ed8; border-color:#3b82f6; color:#fff; }
+  .axbtn.r{ background:#6d28d9; border-color:#8b5cf6; color:#fff; }
+  /* white publication plot surface — scoped to the FIGURE, the app chrome stays dark */
+  #plotwrap[data-ptheme="light"]{ --grid:#e5e7eb; --axis:#94a3b8; }
+  #plotwrap[data-ptheme="light"] #plot{ background:#ffffff; }
+  #plotwrap[data-ptheme="light"] svg text{ fill:#334155; }
+  #plotwrap[data-ptheme="light"] svg .axislabel{ fill:#1f2937; }
+  #plotwrap[data-ptheme="light"] svg .legendtext{ fill:#0f172a; }
+  #plotwrap[data-ptheme="light"] svg .legendnote{ fill:#64748b; }
+  svg text{ font:11px "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace; fill:var(--ink2); }
+  svg .axislabel{ font-size:12px; fill:var(--ink2); }
+  svg .legendtext{ font-size:11.5px; fill:var(--ink); }
+  svg .legendnote{ font-size:10px; fill:var(--ink3); }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:#243450; border-radius:5px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+</style>
+<!--ART_STYLE_END-->
+</head>
+<body>
+<!--ART_BODY_START-->
+<header>
+  <h1>S-Param<span class="dot">·</span>Studio</h1>
+  <button class="btn primary" id="openBtn">+ Import .sNp files</button>
+  <button class="btn ghost" id="demoBtn">Load demo</button>
+  <span class="spacer"></span>
+  <label class="inline">plot
+    <select id="modeSel">
+      <option value="xy" selected>XY vs freq</option>
+      <option value="smith">Smith chart</option>
+    </select>
+  </label>
+  <label class="inline">bg
+    <select id="themeSel">
+      <option value="dark" selected>dark</option>
+      <option value="light">white (publication)</option>
+    </select>
+  </label>
+  <button class="btn ghost" id="copyPngBtn" title="copy the figure to the clipboard as a 900 dpi PNG">⧉ png</button>
+  <button class="btn ghost" id="savePngBtn" title="save the figure as a 900 dpi PNG (DPI written into the file)">⬇ png</button>
+  <button class="btn ghost" id="savePdfBtn" title="save the figure as a fully vector PDF">⬇ pdf</button>
+  <label class="inline">trace quantity
+    <select id="formatSel">
+      <option value="db" selected>|S| (dB)</option>
+      <option value="mag">|S| (linear)</option>
+      <option value="deg">Phase (deg)</option>
+      <option value="degU">Phase unwrapped (deg)</option>
+      <option value="re">Re(S)</option>
+      <option value="im">Im(S)</option>
+    </select>
+  </label>
+  <label class="inline"><input type="checkbox" id="gridChk" checked> grid</label>
+  <label class="inline"><input type="checkbox" id="legendChk" checked> legend</label>
+</header>
+<main>
+  <aside>
+    <h2>Files <span class="rule"></span></h2>
+    <div id="dropzone">drop .s1p / .s2p / … .sNp here<br>(or click to browse)</div>
+    <div id="fileList"></div>
+    <div class="quickbtns">
+      <button class="btn ghost" id="mergeBtn" title="assemble an N-port network from pairwise 2-port measurements">merge s2p → sNp</button>
+      <button class="btn ghost" id="infoBtn" title="the math behind the merge">ⓘ math</button>
+    </div>
+
+    <h2>Traces <span class="rule"></span></h2>
+    <div id="matrixWrap"><div class="empty">Import a file to pick traces.</div></div>
+    <div class="quickbtns" id="quickBtns" style="display:none">
+      <button class="btn ghost" data-q="all">all</button>
+      <button class="btn ghost" data-q="none">none</button>
+      <button class="btn ghost" data-q="refl">S<sub>ii</sub> only</button>
+      <button class="btn ghost" data-q="trans">S<sub>ij</sub> only</button>
+    </div>
+
+    <h2>Figure <span class="rule"></span></h2>
+    <div class="fieldgrid">
+      <span class="lbl">X <span id="xUnitLbl">(GHz)</span></span>
+      <input type="text" id="xminF" placeholder="auto">
+      <input type="text" id="xmaxF" placeholder="auto">
+      <button class="btn ghost mini" id="xAutoBtn">auto</button>
+      <span class="lbl">Y <span id="yUnitLbl"></span></span>
+      <input type="text" id="yminF" placeholder="auto">
+      <input type="text" id="ymaxF" placeholder="auto">
+      <button class="btn ghost mini" id="yAutoBtn">auto</button>
+      <span class="lbl yrrow" style="display:none">Y→R</span>
+      <input type="text" id="yrminF" placeholder="auto" class="yrrow" style="display:none">
+      <input type="text" id="yrmaxF" placeholder="auto" class="yrrow" style="display:none">
+      <button class="btn ghost mini yrrow" id="yrAutoBtn" style="display:none">auto</button>
+    </div>
+    <div class="quickbtns">
+      <button class="btn ghost" id="resetViewBtn">reset view</button>
+    </div>
+
+    <h2>Markers <span class="rule"></span></h2>
+    <div id="markerList"><div class="empty">Click on a trace to pin a marker.</div></div>
+  </aside>
+
+  <div id="plotwrap">
+    <svg id="plot" role="img" aria-label="S-parameter plot">
+      <defs>
+        <clipPath id="clip"><rect id="clipRect"/></clipPath>
+        <clipPath id="clipUnit"><circle id="clipUnitC" cx="0" cy="0" r="0"/></clipPath>
+      </defs>
+      <g id="gridG"></g>
+      <g id="axesG"></g>
+      <g id="pathsG" clip-path="url(#clip)"></g>
+      <g id="markersG"></g>
+      <g id="hoverG"></g>
+      <rect id="bandRect" fill="rgba(59,130,246,.13)" stroke="#3b82f6" stroke-width="1" visibility="hidden"/>
+      <rect id="overlay" fill="transparent"/>
+      <!-- legend AFTER the overlay: a transparent fill is a painted hit target,
+           so anything under it never receives clicks -->
+      <g id="legendG"></g>
+    </svg>
+    <div id="tooltip"></div>
+    <div id="toasts"></div>
+    <div id="hintbar">
+      <span><b>hover</b> = live readout (snaps to real data samples — never interpolated)</span>
+      <span><b>click</b> = pin marker</span>
+      <span><b>drag</b> = zoom</span>
+      <span><b>double-click</b> = reset zoom</span>
+      <span style="margin-left:auto"><b>color = S-parameter · line style = file · matrix cell cycles – / L / R axis</b></span>
+    </div>
+  </div>
+</main>
+<div id="modalBack" class="modalback" hidden><div class="modal" id="modalBox"></div></div>
+<input type="file" id="fileInput" multiple hidden
+  accept=".s1p,.s2p,.s3p,.s4p,.s5p,.s6p,.s7p,.s8p,.snp,.ts,.txt">
+
+<script>
+//<<PURE_START>>
+const SNP = (function(){
+  'use strict';
+  const FREQ_MULT = { hz:1, khz:1e3, mhz:1e6, ghz:1e9, thz:1e12 };
+
+  // Touchstone v1 (+ minimal v2) -> canonical complex S vs freq(Hz).
+  function parseTouchstone(name, text){
+    const warnings = [];
+    let nPorts = null;
+    const extM = /\.s(\d+)p$/i.exec(name || '');
+    if (extM){
+      const ne=parseInt(extM[1],10);
+      if (ne>=1) nPorts=ne;
+      else warnings.push('Nonsensical ".s'+extM[1]+'p" extension ignored — inferring the port count from the data');
+    }
+
+    let unit='ghz', fmt='ma', z0=50, paramType='s', sawOption=false;
+    let v2=false, dataOrder=null, matrixFormat='full', inData=true, ended=false;
+    let refPending=false; const refVals=[];
+    const tokens=[];
+
+    for (const raw of String(text).split(/\r\n|\r|\n/)){
+      if (ended) break;
+      const bang = raw.indexOf('!');
+      const line = (bang>=0 ? raw.slice(0,bang) : raw).trim();
+      if (!line) continue;
+
+      if (line[0]==='['){
+        const m=/^\[([^\]]+)\]\s*(.*)$/.exec(line);
+        if(!m){ warnings.push('Unrecognized bracket line ignored: '+line); continue; }
+        const kw=m[1].trim().toLowerCase(), rest=m[2].trim();
+        refPending = (kw==='reference');
+        if (kw==='version'){ v2=true; inData=false; }
+        else if (kw==='number of ports'){
+          const n=parseInt(rest,10);
+          if (Number.isFinite(n)&&n>0){
+            if (nPorts&&nPorts!==n) warnings.push('[Number of Ports] '+n+' overrides file extension ('+nPorts+'-port)');
+            nPorts=n;
+          }
+        }
+        else if (kw==='two-port data order'){ dataOrder=rest.toLowerCase().replace(/\s+/g,''); }
+        else if (kw==='matrix format'){ matrixFormat=rest.toLowerCase(); }
+        else if (kw==='network data'){ inData=true; }
+        else if (kw==='noise data'||kw==='mixed-mode order'){ inData=false; }
+        else if (kw==='end'){ ended=true; }
+        else if (kw==='reference'){
+          // v2 allows the impedance list on the SAME line or CONTINUATION lines
+          const toks=rest.split(/\s+/).filter(s=>s.length);
+          const nums=toks.map(Number).filter(Number.isFinite);
+          if (nums.length){ refVals.push(...nums); refPending=false; }
+          // else refPending stays true: consume following numeric lines
+        }
+        continue;
+      }
+
+      if (line[0]==='#'){
+        refPending=false;
+        if (sawOption){ warnings.push('Extra option line ignored (first one wins)'); continue; }
+        sawOption=true;
+        const t=line.slice(1).trim().split(/\s+/).filter(Boolean);
+        for (let i=0;i<t.length;i++){
+          const w=t[i].toLowerCase();
+          if (w in FREQ_MULT) unit=w;
+          else if (w==='s'||w==='y'||w==='z'||w==='g'||w==='h') paramType=w;
+          else if (w==='db'||w==='ma'||w==='ri') fmt=w;
+          else if (w==='r'){ const v=parseFloat(t[i+1]); if (Number.isFinite(v)){ z0=v; i++; } }
+          else warnings.push('Unknown option token "'+t[i]+'" ignored');
+        }
+        continue;
+      }
+
+      if (refPending && !inData){   // v2 only: continuation lines between [Reference] and [Network Data]
+        const toks=line.split(/\s+/).filter(s=>s.length);
+        if (toks.length && toks.every(w=>Number.isFinite(Number(w)))){
+          refVals.push(...toks.map(Number));
+          continue;
+        }
+        refPending=false;
+      }
+      if (!inData) continue;
+      for (const w of line.split(/\s+/)){
+        const v=Number(w);
+        if (Number.isFinite(v)) tokens.push(v);
+        else return { ok:false, error:'Non-numeric token "'+w+'" in data section', warnings };
+      }
+    }
+
+    if (refVals.length){
+      z0=refVals[0];
+      if (refVals.some(v=>v!==refVals[0]))
+        warnings.push('[Reference] lists per-port impedances ('+refVals.join(', ')+' Ω) — using '
+          +refVals[0]+' Ω for all ports; renormalization is NOT performed');
+    }
+
+    if (paramType!=='s')
+      return { ok:false, error:'File carries '+paramType.toUpperCase()+'-parameters; this viewer reads S-parameters only', warnings };
+    if (v2 && matrixFormat!=='full')
+      return { ok:false, error:'[Matrix Format] '+matrixFormat+' is not supported (Full only)', warnings };
+    if (!sawOption) warnings.push('No "#" option line found — assuming GHz S MA R 50');
+    if (!tokens.length) return { ok:false, error:'No numeric data found', warnings };
+
+    if (nPorts==null){
+      // collect EVERY shape that fits; a 1-port with points%3==0 also fits n=2
+      // (stride 9 lands on true frequencies), so a single-winner pick fabricates
+      // a 2-port from 1-port data — refuse ambiguity instead of guessing
+      const fits=[];
+      for (const n of [1,2,3,4,5,6,7,8]){
+        const rec=1+2*n*n;
+        if (tokens.length>=rec && tokens.length%rec===0){
+          let mono=true;
+          for (let k=rec;k<tokens.length;k+=rec) if (!(tokens[k]>tokens[k-rec])){ mono=false; break; }
+          if (mono) fits.push(n);
+        }
+      }
+      if (fits.length===1){ nPorts=fits[0]; warnings.push('Port count inferred from data shape: '+fits[0]); }
+      else if (fits.length===0)
+        return { ok:false, error:'Cannot determine port count — name the file with a .sNp extension', warnings };
+      else
+        return { ok:false, error:'Ambiguous data shape — fits '+fits.map(n=>n+'-port').join(' and ')
+          +'; name the file with a .sNp extension so nothing is guessed', warnings };
+    }
+
+    const n=nPorts, rec=1+2*n*n;
+    const freqsRaw=[], rows=[];
+    let i=0, prev=-Infinity, dupCount=0, brokeF=null;
+    while (i+rec<=tokens.length){
+      const f=tokens[i];
+      if (freqsRaw.length && f<prev){ brokeF=f; break; }         // strict DECREASE only
+      if (freqsRaw.length && f===prev) dupCount++;               // segment boundaries: keep as-is
+      freqsRaw.push(f);
+      rows.push(tokens.slice(i+1,i+rec));
+      prev=f; i+=rec;
+    }
+    if (dupCount)
+      warnings.push(dupCount+' duplicate frequency point(s) kept as-is (segmented-sweep boundaries?)');
+    const leftover=tokens.length-i;
+    if (brokeF!=null){
+      // a genuine v1 2-port noise block is 5-column rows with INCREASING frequencies
+      let isNoise = n===2 && leftover>=5 && leftover%5===0;
+      if (isNoise)
+        for (let k=i+5;k<tokens.length;k+=5) if (!(tokens[k]>tokens[k-5])){ isNoise=false; break; }
+      if (isNoise){
+        warnings.push('Noise-parameter block ('+(leftover/5)+' points) present — ignored');
+      } else if (freqsRaw.length<2){
+        return { ok:false, error:'Frequencies decrease from the very start ('+brokeF+' after '+prev
+          +') — a descending sweep? Sort the file ascending; this viewer never reorders data', warnings };
+      } else {
+        const total=freqsRaw.length+Math.floor(leftover/rec);
+        warnings.push('KEPT ONLY '+freqsRaw.length+' of ~'+total+' data points — frequency decreased at point '
+          +(freqsRaw.length+1)+' ('+brokeF+' after '+prev+'); the remainder was ignored');
+      }
+    } else if (leftover>0){
+      warnings.push(leftover+' trailing value(s) do not form a complete data point — ignored');
+    }
+    if (!freqsRaw.length) return { ok:false, error:'No complete data points found', warnings };
+
+    let order;
+    if (n===2){
+      // Touchstone v1 2-port data order is S11 S21 S12 S22 (21_12).
+      let ord='21_12';
+      if (v2){
+        if (dataOrder==='12_21'||dataOrder==='21_12') ord=dataOrder;
+        else warnings.push('[Two-Port Data Order] missing/unrecognized — assuming 21_12');
+      }
+      order = ord==='12_21' ? ['1,1','1,2','2,1','2,2'] : ['1,1','2,1','1,2','2,2'];
+    } else {
+      order=[];
+      for (let r=1;r<=n;r++) for (let c=1;c<=n;c++) order.push(r+','+c);
+    }
+
+    const N=freqsRaw.length, mult=FREQ_MULT[unit];
+    const freqHz=new Float64Array(N);
+    for (let k=0;k<N;k++) freqHz[k]=freqsRaw[k]*mult;
+    const S={};
+    for (const key of order) S[key]={ re:new Float64Array(N), im:new Float64Array(N) };
+    const D2R=Math.PI/180;
+    for (let p=0;p<N;p++){
+      const row=rows[p];
+      for (let k=0;k<n*n;k++){
+        const a=row[2*k], b=row[2*k+1];
+        let re,im;
+        if (fmt==='ri'){ re=a; im=b; }
+        else {
+          const mag = fmt==='db' ? Math.pow(10,a/20) : a;
+          re=mag*Math.cos(b*D2R); im=mag*Math.sin(b*D2R);
+        }
+        const s=S[order[k]]; s.re[p]=re; s.im[p]=im;
+      }
+    }
+    return { ok:true, name, nPorts:n, z0, unit, fmt, v2, freqHz, S, points:N, warnings };
+  }
+
+  function unwrapDeg(a){
+    const out=new Float64Array(a.length);
+    if (!a.length) return out;
+    out[0]=a[0]; let off=0;
+    for (let k=1;k<a.length;k++){
+      let d=a[k]-a[k-1];
+      while (d>180){ off-=360; d-=360; }
+      while (d<-180){ off+=360; d+=360; }
+      out[k]=a[k]+off;
+    }
+    return out;
+  }
+
+  function traceValues(s, format){
+    const N=s.re.length, R2D=180/Math.PI;
+    if (format==='degU'){
+      const ph=new Float64Array(N);
+      for (let k=0;k<N;k++) ph[k]=Math.atan2(s.im[k],s.re[k])*R2D;
+      return unwrapDeg(ph);
+    }
+    const out=new Float64Array(N);
+    for (let k=0;k<N;k++){
+      const re=s.re[k], im=s.im[k];
+      switch(format){
+        case 'db': { const m=Math.hypot(re,im); out[k]= m>0 ? 20*Math.log10(m) : NaN; break; }
+        case 'mag': out[k]=Math.hypot(re,im); break;
+        case 'deg': out[k]=Math.atan2(im,re)*R2D; break;
+        case 're': out[k]=re; break;
+        case 'im': out[k]=im; break;
+        default: out[k]=NaN;
+      }
+    }
+    return out;
+  }
+
+  function nearestIdx(arr, x){
+    let lo=0, hi=arr.length-1;
+    if (hi<0) return -1;
+    if (x<=arr[0]) return 0;
+    if (x>=arr[hi]) return hi;
+    while (hi-lo>1){ const mid=(lo+hi)>>1; if (arr[mid]<=x) lo=mid; else hi=mid; }
+    return (x-arr[lo]<=arr[hi]-x) ? lo : hi;
+  }
+
+  function niceStep(span, target){
+    const raw=span/Math.max(1,target);
+    const p=Math.pow(10,Math.floor(Math.log10(raw)));
+    for (const m of [1,2,5,10]) if (m*p>=raw-p*1e-9) return m*p;
+    return 10*p;
+  }
+  function ticks(min, max, target){
+    if (!(isFinite(min)&&isFinite(max)&&max>min)) return [];
+    const step=niceStep(max-min, target||6);
+    // denormal spans underflow niceStep to 0 -> i0/i1 = Infinity -> the loop never
+    // terminates (real OOM, reachable from the range fields). No ticks beats no tab.
+    if (!isFinite(step)||step<=0) return [];
+    const i0=Math.ceil(min/step-1e-9), i1=Math.floor(max/step+1e-9);
+    if (!isFinite(i0)||!isFinite(i1)||i1-i0>2000) return [];
+    const out=[];
+    for (let i=i0;i<=i1;i++){ const v=i*step; out.push(Math.abs(v)<step*1e-9?0:v); }
+    return out;
+  }
+
+  function freqUnitFor(hz){
+    const a=Math.abs(hz);
+    if (a>=1e12) return { name:'THz', mult:1e12 };
+    if (a>=1e9)  return { name:'GHz', mult:1e9 };
+    if (a>=1e6)  return { name:'MHz', mult:1e6 };
+    if (a>=1e3)  return { name:'kHz', mult:1e3 };
+    return { name:'Hz', mult:1 };
+  }
+
+  // z = Z0*(1+G)/(1-G); null at G -> 1 (open). Exact complex division, no approximation.
+  function gammaToZ(re, im, z0){
+    const dRe=1-re, dIm=-im;
+    const den=dRe*dRe+dIm*dIm;
+    if (den<1e-12) return null;
+    const nRe=1+re, nIm=im;
+    return { r:z0*(nRe*dRe+nIm*dIm)/den, x:z0*(nIm*dRe-nRe*dIm)/den };
+  }
+
+  // Smith-chart grid in the Gamma plane: constant-r circles (center r/(1+r), radius 1/(1+r))
+  // and constant-x circles (center (1, 1/x), radius 1/|x|), clipped to |G|<=1 by the renderer.
+  function smithGridGeometry(){
+    const vals=[0.2,0.5,1,2,5];
+    const circles=vals.map(r=>({ kind:'r', v:r, cx:r/(1+r), cy:0, rad:1/(1+r) }));
+    const arcs=[];
+    for (const x of vals){
+      arcs.push({ kind:'x', v:x,  cx:1, cy:1/x,  rad:1/x });
+      arcs.push({ kind:'x', v:-x, cx:1, cy:-1/x, rad:1/x });
+    }
+    return { circles, arcs };
+  }
+  // where the constant-x circle meets the unit circle: Gamma of z = jx (label anchor)
+  function smithXLabelPoint(x){
+    const d=x*x+1;
+    return { re:(x*x-1)/d, im:2*x/d };
+  }
+
+  function fmtNum(v, sig){
+    if (v==null || !isFinite(v)) return '—';
+    if (v===0) return '0';
+    const a=Math.abs(v);
+    if (a<1e-4 || a>=1e6) return v.toExponential((sig||5)-1);
+    return String(parseFloat(v.toPrecision(sig||5)));
+  }
+
+  // Assemble an N-port S-matrix from pairwise 2-port measurements taken with
+  // every idle port terminated in a matched load (Gamma=0 => a_k=0, which IS
+  // the defining condition of S-parameters, so measured entries map verbatim).
+  // entries: [{ net:{nPorts,z0,freqHz,S}, a, b, label }]  (file port1->a, port2->b)
+  function mergeSnp(entries, Nopt){
+    const warnings=[];
+    if (!entries || !entries.length) return { ok:false, error:'No measurements given', warnings };
+    let N=0;
+    for (const e of entries){
+      const lab=e.label||'entry';
+      if (!e.net || e.net.nPorts!==2) return { ok:false, error:lab+' is not a 2-port network', warnings };
+      if (!(Number.isInteger(e.a)&&Number.isInteger(e.b)&&e.a>=1&&e.b>=1))
+        return { ok:false, error:'Invalid port assignment on '+lab, warnings };
+      if (e.a===e.b) return { ok:false, error:lab+': the two network ports must differ', warnings };
+      N=Math.max(N,e.a,e.b);
+    }
+    if (Nopt){
+      if (Nopt<N) return { ok:false, error:'Port count '+Nopt+' is smaller than the highest assigned port ('+N+')', warnings };
+      N=Nopt;
+    }
+    if (N<2) return { ok:false, error:'Need at least 2 network ports', warnings };
+    if (N>16) return { ok:false, error:'N='+N+' — more than 16 ports is not supported '
+      +'(typo in a port assignment? "23" means port 23, not ports 2 and 3)', warnings };
+    const z0=entries[0].net.z0!=null?entries[0].net.z0:50;
+    for (const e of entries){
+      const z=e.net.z0!=null?e.net.z0:50;
+      if (z!==z0) return { ok:false, error:'Reference impedance mismatch: '+(e.label||'entry')+' is '+z+' Ω vs '+z0+' Ω — renormalization is out of scope', warnings };
+    }
+    const ref=entries[0].net.freqHz, M=ref.length;
+    for (const e of entries){
+      const f=e.net.freqHz, lab=e.label||'entry';
+      if (f.length!==M)
+        return { ok:false, error:'Frequency grid mismatch: '+lab+' has '+f.length+' points vs '+M+' — merging never interpolates', warnings };
+      for (let k=0;k<M;k++){
+        if (Math.abs(f[k]-ref[k]) > 1e-9*Math.max(1,Math.abs(ref[k])))
+          return { ok:false, error:'Frequency grid mismatch at point '+k+' ('+lab+'): '+f[k]+' vs '+ref[k]+' Hz — merging never interpolates', warnings };
+      }
+    }
+    const contrib={};
+    const push=(key,s,label)=>{ (contrib[key]=contrib[key]||[]).push({re:s.re,im:s.im,label}); };
+    for (const e of entries){
+      push(e.a+','+e.a, e.net.S['1,1'], e.label);
+      push(e.b+','+e.a, e.net.S['2,1'], e.label);   // S21_meas = S(b,a)
+      push(e.a+','+e.b, e.net.S['1,2'], e.label);   // S12_meas = S(a,b)
+      push(e.b+','+e.b, e.net.S['2,2'], e.label);
+    }
+    const sLab=(i,j)=> (i>9||j>9) ? 'S('+i+','+j+')' : 'S'+i+j;
+    const S={}, spreads=[], missing=[];
+    for (let i=1;i<=N;i++) for (let j=1;j<=N;j++){
+      const key=i+','+j, c=contrib[key];
+      const re=new Float64Array(M), im=new Float64Array(M);
+      if (!c){ missing.push(sLab(i,j)); S[key]={re,im}; continue; }
+      for (let k=0;k<M;k++){
+        let sr=0, si=0;
+        for (const q of c){ sr+=q.re[k]; si+=q.im[k]; }
+        re[k]=sr/c.length; im[k]=si/c.length;
+      }
+      if (c.length>1){
+        let worst=0, wk=0;
+        for (let k=0;k<M;k++) for (const q of c){
+          const d=Math.hypot(q.re[k]-re[k], q.im[k]-im[k]);
+          if (d>worst){ worst=d; wk=k; }
+        }
+        spreads.push({ key, n:c.length, maxDev:worst, atHz:ref[wk] });
+      }
+      S[key]={re,im};
+    }
+    if (missing.length)
+      warnings.push('Not measured, set to 0 (matched-load assumption): '+missing.join(', '));
+    let consistency=null;
+    if (spreads.length){
+      spreads.sort((x,y)=>y.maxDev-x.maxDev);
+      consistency={ worst:spreads[0], all:spreads };
+    }
+    return { ok:true, nPorts:N, z0, freqHz:new Float64Array(ref), S, points:M, warnings, consistency };
+  }
+
+  // Touchstone v1 writer: Hz + RI + String(Number) => bit-exact re-parse.
+  function serializeTouchstone(net, opts){
+    opts=opts||{};
+    const n=net.nPorts, M=net.freqHz.length;
+    const z0=net.z0!=null?net.z0:50;
+    const lines=[];
+    for (const c of (opts.comments||[])) lines.push('! '+c);
+    lines.push('# Hz S RI R '+z0);
+    const missingKeys=new Set();
+    const val=(i,j,k)=>{
+      const s=net.S[i+','+j];
+      if (!s){ missingKeys.add(i+','+j); return '0 0'; }
+      return String(s.re[k])+' '+String(s.im[k]);
+    };
+    for (let k=0;k<M;k++){
+      if (n===1) lines.push(String(net.freqHz[k])+' '+val(1,1,k));
+      else if (n===2)
+        lines.push([String(net.freqHz[k]), val(1,1,k), val(2,1,k), val(1,2,k), val(2,2,k)].join(' '));  // v1 order
+      else {
+        for (let i=1;i<=n;i++){
+          let parts = i===1? [String(net.freqHz[k])] : [];
+          let cnt=0;
+          for (let j=1;j<=n;j++){
+            parts.push(val(i,j,k));
+            if (++cnt%4===0 && j<n){ lines.push(parts.join(' ')); parts=[]; }
+          }
+          if (parts.length) lines.push(parts.join(' '));
+        }
+      }
+    }
+    if (missingKeys.size && Array.isArray(opts.warnings))
+      opts.warnings.push('serializer wrote 0 for entries absent from the S map: '+[...missingKeys].join(' '));
+    return lines.join('\n')+'\n';
+  }
+
+  return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint };
+})();
+if (typeof module!=='undefined' && module.exports) module.exports = SNP;
+//<<PURE_END>>
+
+(function(){
+'use strict';
+const $=id=>document.getElementById(id);
+
+// color = S-parameter (fixed semantics; palette CVD-validated on this surface)
+const SPARAM_COLORS={ '1,1':'#ef4444', '2,1':'#3b82f6', '1,2':'#16a34a', '2,2':'#d97706' };
+// 12 extras (CVD-validated on this surface): a 4-port's 12 non-2-port keys all get
+// DISTINCT colors; only 5-port+ wraps, where the legend text disambiguates
+const EXTRA_COLORS=['#a855f7','#0d9488','#e11d48','#0284c7','#65a30d','#c2410c','#6366f1','#059669','#c026d3','#b45309','#0891b2','#8b5cf6'];
+// line style = file
+const FILE_DASHES=[
+  { label:'solid',      dash:'' },
+  { label:'dashed',     dash:'9 6' },
+  { label:'dotted',     dash:'2 5' },
+  { label:'dash-dot',   dash:'13 5 2.5 5' },
+  { label:'long dash',  dash:'20 7' },
+  { label:'short dash', dash:'5 4' },
+];
+const FORMAT_LABELS={ db:'|S| (dB)', mag:'|S| (linear)', deg:'Phase (°)', degU:'Phase, unwrapped (°)', re:'Re(S)', im:'Im(S)' };
+
+const state={
+  files:[],                       // {id, name, parsed, text, dashIdx}
+  sel:new Set(),                  // "fid|i,j"
+  axisR:new Set(),                // subset of sel plotted on the RIGHT y axis (XY mode)
+  format:'db',
+  plotMode:'xy',                  // 'xy' | 'smith'
+  plotTheme:'dark',               // 'dark' | 'light' (white publication figure)
+  grid:true, legend:true,
+  view:{ xmin:null, xmax:null, ymin:null, ymax:null, yrmin:null, yrmax:null },
+  smithView:{ cx:0, cy:0, r:1.15 },   // square window in the Gamma plane
+  markers:[],                     // {id, fid, key, idx}
+};
+let fileCounter=0, dashCounter=0, markerCounter=0;
+// light (white-background) variants keep the SAME hue per (i,j), stepped darker
+const SPARAM_COLORS_LIGHT={ '1,1':'#dc2626', '2,1':'#2563eb', '1,2':'#15803d', '2,2':'#b45309' };
+const EXTRA_COLORS_LIGHT=['#7e22ce','#0d9488','#be123c','#0369a1','#65a30d','#c2410c','#4338ca','#047857','#a21caf','#92400e','#0891b2','#6d28d9'];
+const colorMap=new Map();          // key -> extras index (theme-independent identity)
+function colorIdxFor(key){
+  if (!colorMap.has(key)) colorMap.set(key, colorMap.size);
+  return colorMap.get(key);
+}
+function colorFor(key){            // figure-surface color, follows the plot theme
+  const light=state.plotTheme==='light';
+  const fixed=light?SPARAM_COLORS_LIGHT:SPARAM_COLORS;
+  if (fixed[key]) return fixed[key];
+  const ex=light?EXTRA_COLORS_LIGHT:EXTRA_COLORS;
+  return ex[colorIdxFor(key)%ex.length];
+}
+function chipColor(key){           // sidebar chips always sit on the dark app chrome
+  if (SPARAM_COLORS[key]) return SPARAM_COLORS[key];
+  return EXTRA_COLORS[colorIdxFor(key)%EXTRA_COLORS.length];
+}
+function keyCmp(a,b){
+  const [ai,aj]=a.split(',').map(Number), [bi,bj]=b.split(',').map(Number);
+  return ai-bi || aj-bj;
+}
+function keyLabel(key){
+  const [i,j]=key.split(',');
+  return (+i>9||+j>9) ? 'S('+i+','+j+')' : 'S'+i+j;   // 'S111' is ambiguous past port 9
+}
+
+const derivedCache=new Map();
+function traceY(f,key){
+  const ck=f.id+'|'+key+'|'+state.format;
+  let y=derivedCache.get(ck);
+  if (!y){ y=SNP.traceValues(f.parsed.S[key], state.format); derivedCache.set(ck,y); }
+  return y;
+}
+function fileById(fid){ return state.files.find(x=>x.id===fid) || null; }
+
+function traces(){
+  const out=[];
+  for (const s of state.sel){
+    const bar=s.indexOf('|');
+    const fid=s.slice(0,bar), key=s.slice(bar+1);
+    const f=fileById(fid);
+    if (!f || !f.parsed.S[key]) continue;
+    out.push({ f, key, x:f.parsed.freqHz, y:traceY(f,key), color:colorFor(key),
+               dash:FILE_DASHES[f.dashIdx].dash, axis: state.axisR.has(s)?'R':'L' });
+  }
+  out.sort((a,b)=> keyCmp(a.key,b.key) || state.files.indexOf(a.f)-state.files.indexOf(b.f));
+  return out;
+}
+
+// ---------- file loading ----------
+function loadText(name, text){
+  const p=SNP.parseTouchstone(name, text);
+  if (!p.ok){ toast('✗ '+name+' — '+p.error, true); return p; }
+  if (state.files.some(x=>x.name===name))
+    toast('note: another file named '+name+' is already loaded — the new one gets a different line style', false);
+  const f={ id:'f'+(++fileCounter), name, parsed:p, text:String(text), dashIdx:(dashCounter++)%FILE_DASHES.length };
+  state.files.push(f);
+  Object.keys(p.S).sort(keyCmp).forEach(colorFor);
+  defaultSelect(f);
+  if (p.warnings.length) toast('⚠ '+name+' — '+p.warnings.join(' · '), false);
+  renderAll();
+  return p;
+}
+function defaultSelect(f){
+  // adding a file auto-selects the S-params already being compared, so file N
+  // lands on the plot next to file 1 with zero clicks.
+  const active=new Set();
+  state.sel.forEach(s=>active.add(s.slice(s.indexOf('|')+1)));
+  const keys=Object.keys(f.parsed.S).sort(keyCmp);
+  if (!keys.length) return;
+  if (active.size){
+    keys.forEach(k=>{ if (active.has(k)) state.sel.add(f.id+'|'+k); });
+    if (![...state.sel].some(s=>s.startsWith(f.id+'|'))) state.sel.add(f.id+'|'+keys[0]);
+  } else {
+    if (f.parsed.S['1,1']) state.sel.add(f.id+'|1,1');
+    if (f.parsed.S['2,1']) state.sel.add(f.id+'|2,1');
+    if (![...state.sel].some(s=>s.startsWith(f.id+'|'))) state.sel.add(f.id+'|'+keys[0]);
+  }
+}
+function removeFile(fid){
+  state.files=state.files.filter(f=>f.id!==fid);
+  state.sel=new Set([...state.sel].filter(s=>!s.startsWith(fid+'|')));
+  state.axisR=new Set([...state.axisR].filter(s=>!s.startsWith(fid+'|')));
+  state.markers=state.markers.filter(m=>m.fid!==fid);
+  derivedCache.clear();
+  if (!state.files.length) dashCounter=0;
+  renderAll();
+}
+function toggleSel(fid,key,on){
+  const s=fid+'|'+key;
+  const want = on==null ? !state.sel.has(s) : !!on;
+  if (want) state.sel.add(s);
+  else {
+    state.sel.delete(s);
+    state.axisR.delete(s);
+    state.markers=state.markers.filter(m=>!(m.fid===fid&&m.key===key));
+  }
+  renderAll();
+}
+// matrix-cell cycle: off -> left axis -> right axis -> off
+function cycleSel(fid,key){
+  const s=fid+'|'+key;
+  if (!state.sel.has(s)) state.sel.add(s);
+  else if (!state.axisR.has(s)) state.axisR.add(s);
+  else {
+    state.sel.delete(s); state.axisR.delete(s);
+    state.markers=state.markers.filter(m=>!(m.fid===fid&&m.key===key));
+  }
+  renderAll();
+}
+
+// ---------- file save (hosted-artifact capability, else plain download) ----------
+async function saveTextFile(name, text){
+  try {
+    const dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null;
+    if (dl){
+      // the artifact viewer allowlists extensions (.txt yes, .s3p no) —
+      // wrap Touchstone names in .txt and tell the viewer to rename
+      const okExt=/\.(txt|json|md)$/i.test(name);
+      const fname= okExt? name : name+'.txt';
+      try {
+        await dl.save({ filename:fname, data:text });
+        toast('⬇ saved as '+fname+(okExt?'':' — rename to drop the .txt'), false);
+      } catch(e){
+        const code=e&&e.code;
+        if (code==='declined') return;
+        if (code==='rate_limited') toast('⏳ a save prompt is already open — try again in a moment', false);
+        else toast('✗ save failed ('+(code||'error')+') — use ⧉ copy instead', false);
+      }
+      return;
+    }
+  } catch(_){ /* fall through to plain download */ }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
+  a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
+// ---------- toasts ----------
+function toast(msg, sticky){
+  const d=document.createElement('div');
+  d.className='toast'+(sticky?' err':'');
+  d.textContent=msg;
+  d.title='click to dismiss';
+  d.onclick=()=>d.remove();
+  $('toasts').appendChild(d);
+  if (!sticky) setTimeout(()=>d.remove(), 7000);
+}
+
+// ---------- sidebar ----------
+function styleSampleSVG(dash, color){
+  return '<svg class="stylesample" width="34" height="12" viewBox="0 0 34 12">'
+    +'<line x1="1" y1="6" x2="33" y2="6" stroke="'+(color||'#cbd5e1')+'" stroke-width="2"'
+    +(dash?' stroke-dasharray="'+dash+'"':'')+'/></svg>';
+}
+function renderFiles(){
+  const el=$('fileList');
+  if (!state.files.length){ el.innerHTML='<div class="empty">No files loaded yet.</div>'; return; }
+  el.innerHTML=state.files.map(f=>{
+    const p=f.parsed, u=SNP.freqUnitFor(p.freqHz[p.freqHz.length-1]);
+    const f0=SNP.fmtNum(p.freqHz[0]/u.mult,4), f1=SNP.fmtNum(p.freqHz[p.freqHz.length-1]/u.mult,4);
+    const warn=p.warnings.length
+      ? '<span class="warn" title="'+esc(p.warnings.join('\n'))+'">⚠</span>' : '';
+    return '<div class="filerow">'+styleSampleSVG(FILE_DASHES[f.dashIdx].dash)
+      +'<div class="fmeta"><div class="fname" title="'+esc(f.name)+'">'+esc(f.name)+'</div>'
+      +'<div class="fsub">'+p.nPorts+'-port · '+p.points+' pts · '+f0+'–'+f1+' '+u.name
+      +' · '+p.z0+' Ω · '+FILE_DASHES[f.dashIdx].label+'</div></div>'
+      +warn
+      +'<button class="rm" title="download Touchstone file" data-dl="'+f.id+'">⬇</button>'
+      +'<button class="rm" title="copy Touchstone text to clipboard" data-cp="'+f.id+'">⧉</button>'
+      +'<button class="rm" title="remove file" data-rm="'+f.id+'">✕</button></div>';
+  }).join('');
+  el.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>removeFile(b.dataset.rm));
+  el.querySelectorAll('[data-dl]').forEach(b=>b.onclick=()=>{
+    const f=fileById(b.dataset.dl); if (f) saveTextFile(f.name, f.text);
+  });
+  el.querySelectorAll('[data-cp]').forEach(b=>b.onclick=()=>{
+    const f=fileById(b.dataset.cp); if (!f) return;
+    navigator.clipboard.writeText(f.text).then(
+      ()=>toast('⧉ '+f.name+' copied to clipboard', false),
+      ()=>toast('✗ clipboard blocked — use the ⬇ download instead', false));
+  });
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+function unionKeys(){
+  const set=new Set();
+  state.files.forEach(f=>Object.keys(f.parsed.S).forEach(k=>set.add(k)));
+  return [...set].sort(keyCmp);
+}
+function renderMatrix(){
+  const wrap=$('matrixWrap');
+  if (!state.files.length){
+    wrap.innerHTML='<div class="empty">Import a file to pick traces.</div>';
+    $('quickBtns').style.display='none';
+    return;
+  }
+  $('quickBtns').style.display='flex';
+  const keys=unionKeys();
+  let h='<table class="matrix"><tr><th class="corner">trace \\ file</th>';
+  state.files.forEach((f,fi)=>{
+    h+='<th data-col="'+f.id+'" title="'+esc(f.name)+' — click to toggle column">'
+      +styleSampleSVG(FILE_DASHES[f.dashIdx].dash)+'<br>'+esc(shortName(f.name,10))+'</th>';
+  });
+  h+='</tr>';
+  for (const k of keys){
+    h+='<tr><th data-row="'+k+'" title="click to toggle row">'
+      +'<span class="chip" style="background:'+chipColor(k)+'"></span>'+keyLabel(k)+'</th>';
+    for (const f of state.files){
+      if (!f.parsed.S[k]){ h+='<td class="na">–</td>'; continue; }
+      const id=f.id+'|'+k;
+      const on=state.sel.has(id), right=state.axisR.has(id);
+      h+='<td data-cell="'+id+'"><button class="axbtn'+(on?(right?' r':' l'):'')+'" data-cb="'+id
+        +'" title="click cycles: off → Left axis → Right axis">'+(on?(right?'R':'L'):'–')+'</button></td>';
+    }
+    h+='</tr>';
+  }
+  h+='</table>';
+  wrap.innerHTML=h;
+  wrap.querySelectorAll('[data-cb]').forEach(b=>{
+    b.onclick=(e)=>{ e.stopPropagation(); const [fid,key]=splitSel(b.dataset.cb); cycleSel(fid,key); };
+  });
+  wrap.querySelectorAll('td[data-cell]').forEach(td=>{
+    td.onclick=()=>{ const [fid,key]=splitSel(td.dataset.cell); cycleSel(fid,key); };
+  });
+  const dropOff=(fid,k)=>{
+    state.sel.delete(fid+'|'+k); state.axisR.delete(fid+'|'+k);
+    state.markers=state.markers.filter(m=>!(m.fid===fid&&m.key===k));
+  };
+  wrap.querySelectorAll('th[data-row]').forEach(th=>{
+    th.onclick=()=>{
+      const k=th.dataset.row;
+      const cells=state.files.filter(f=>f.parsed.S[k]);
+      const allOn=cells.every(f=>state.sel.has(f.id+'|'+k));
+      cells.forEach(f=>{ if (allOn) dropOff(f.id,k); else state.sel.add(f.id+'|'+k); });
+      renderAll();
+    };
+  });
+  wrap.querySelectorAll('th[data-col]').forEach(th=>{
+    th.onclick=()=>{
+      const f=fileById(th.dataset.col); if (!f) return;
+      const ks=Object.keys(f.parsed.S);
+      const allOn=ks.every(k=>state.sel.has(f.id+'|'+k));
+      ks.forEach(k=>{ if (allOn) dropOff(f.id,k); else state.sel.add(f.id+'|'+k); });
+      renderAll();
+    };
+  });
+}
+function splitSel(s){ const i=s.indexOf('|'); return [s.slice(0,i), s.slice(i+1)]; }
+function shortName(n,max){
+  const base=n.replace(/\.[^.]+$/,'');
+  return base.length>max ? base.slice(0,max-1)+'…' : base;
+}
+$('quickBtns').querySelectorAll('[data-q]').forEach(b=>{
+  b.onclick=()=>{
+    const q=b.dataset.q;
+    if (q==='none'){ state.sel.clear(); state.axisR.clear(); state.markers=[]; }
+    else for (const f of state.files) for (const k of Object.keys(f.parsed.S)){
+      const [i,j]=k.split(',');
+      const want = q==='all' || (q==='refl'&&i===j) || (q==='trans'&&i!==j);
+      if (want) state.sel.add(f.id+'|'+k);
+      else {
+        state.sel.delete(f.id+'|'+k);
+        state.axisR.delete(f.id+'|'+k);
+        state.markers=state.markers.filter(m=>!(m.fid===f.id&&m.key===k));
+      }
+    }
+    renderAll();
+  };
+});
+
+// ---------- plot ----------
+const svg=$('plot');
+let P=null;   // current plot geometry (mode 'xy' or 'smith')
+const M={ l:66, r:18, t:14, b:48 };
+// figure-surface chrome per plot theme (the legend/marker panels are part of the FIGURE,
+// unlike the tooltip, which is app UI and stays dark)
+const PLOT_CHROME={
+  dark:  { panel:'rgba(10,16,28,.88)',  panelStroke:'#2c4266', dot:'#0b1220', cross:'#5e7092' },
+  light: { panel:'rgba(255,255,255,.93)', panelStroke:'#cbd5e1', dot:'#ffffff', cross:'#94a3b8' },
+};
+function chrome(){ return PLOT_CHROME[state.plotTheme]||PLOT_CHROME.dark; }
+
+function dataUnit(){
+  let mx=0;
+  for (const f of state.files){ const a=f.parsed.freqHz; if (a.length) mx=Math.max(mx, a[a.length-1]); }
+  return SNP.freqUnitFor(mx||1e9);
+}
+function computeViewXY(trsL, trsR){
+  let x0=Infinity, x1=-Infinity;
+  for (const t of trsL.concat(trsR)){ if (t.x.length){ x0=Math.min(x0,t.x[0]); x1=Math.max(x1,t.x[t.x.length-1]); } }
+  if (!isFinite(x0)){ x0=0; x1=1; }
+  if (state.view.xmin!=null) x0=state.view.xmin;
+  if (state.view.xmax!=null) x1=state.view.xmax;
+  if (!(x1>x0)){ const c=x0; x0=c-Math.abs(c||1)*0.5; x1=c+Math.abs(c||1)*0.5; }
+  const ydom=(trs, mn, mx)=>{
+    let y0=Infinity, y1=-Infinity;
+    for (const t of trs){
+      for (let k=0;k<t.x.length;k++){
+        if (t.x[k]<x0||t.x[k]>x1) continue;
+        const v=t.y[k];
+        if (isFinite(v)){ if (v<y0)y0=v; if (v>y1)y1=v; }
+      }
+    }
+    if (!isFinite(y0)){ y0=-1; y1=1; }
+    if (y1===y0){ y0-=1; y1+=1; }
+    const pad=(y1-y0)*0.06; y0-=pad; y1+=pad;
+    if (mn!=null) y0=mn;
+    if (mx!=null) y1=mx;
+    if (!(y1>y0)) y1=y0+1;
+    return [y0,y1];
+  };
+  const [yL0,yL1]=ydom(trsL, state.view.ymin,  state.view.ymax);
+  const [yR0,yR1]=ydom(trsR, state.view.yrmin, state.view.yrmax);
+  return { x0,x1,yL0,yL1,yR0,yR1 };
+}
+const xToPx=x=> P.l + (x-P.x0)/(P.x1-P.x0)*P.w;
+const pxToX=px=> P.x0 + (px-P.l)/P.w*(P.x1-P.x0);
+const yPxAx=(y,ax)=> ax==='R'
+  ? P.t + (P.yR1-y)/(P.yR1-P.yR0)*P.h
+  : P.t + (P.yL1-y)/(P.yL1-P.yL0)*P.h;
+const pxToYAx=(py,ax)=> ax==='R'
+  ? P.yR1 - (py-P.t)/P.h*(P.yR1-P.yR0)
+  : P.yL1 - (py-P.t)/P.h*(P.yL1-P.yL0);
+function axisOf(fid,key){ return state.axisR.has(fid+'|'+key)?'R':'L'; }
+// frequency-windowed raw complex samples of a trace (Smith mode; no interpolation)
+function smithSamples(t){
+  const S=t.f.parsed.S[t.key], fr=t.f.parsed.freqHz;
+  const x0=state.view.xmin!=null?state.view.xmin:-Infinity;
+  const x1=state.view.xmax!=null?state.view.xmax:Infinity;
+  const re=[], im=[], idxs=[];
+  for (let k=0;k<fr.length;k++){
+    if (fr[k]<x0||fr[k]>x1) continue;
+    if (!isFinite(S.re[k])||!isFinite(S.im[k])) continue;
+    re.push(S.re[k]); im.push(S.im[k]); idxs.push(k);
+  }
+  return { n:re.length, re, im, idxs };
+}
+
+function renderPlot(){
+  const r=svg.getBoundingClientRect();
+  const W=Math.max(80, r.width), H=Math.max(60, r.height);
+  const trs=traces();
+  const unit=dataUnit();
+  $('plotwrap').dataset.ptheme=state.plotTheme;
+  const smith=state.plotMode==='smith';
+  $('formatSel').disabled=smith;
+  $('formatSel').title= smith? 'Smith chart plots the complex S directly — the quantity applies to XY mode':'';
+  ['yminF','ymaxF','yrminF','yrmaxF'].forEach(id=>{ const e=$(id); if (e) e.disabled=smith; });
+  const showYr = !smith && trs.some(t=>t.axis==='R');
+  document.querySelectorAll('.yrrow').forEach(e=>{ e.style.display=showYr?'':'none'; });
+  if (smith) renderSmith(W,H,trs,unit);
+  else renderXY(W,H,trs,unit);
+  renderPinnedMarkers();
+  renderLegend();
+  hoverFocus=null;                       // geometry changed — a stale focus must not pin ghosts
+  $('hoverG').innerHTML='';
+  $('tooltip').style.display='none';
+  syncRangeFields();
+}
+
+function renderXY(W,H,trs,unit){
+  const trsL=trs.filter(t=>t.axis!=='R'), trsR=trs.filter(t=>t.axis==='R');
+  const hasR=trsR.length>0;
+  const mr=hasR?70:M.r;
+  const v=computeViewXY(trsL,trsR);
+  P={ mode:'xy', l:M.l, t:M.t, w:Math.max(10,W-M.l-mr), h:Math.max(10,H-M.t-M.b),
+      x0:v.x0, x1:v.x1, yL0:v.yL0, yL1:v.yL1, yR0:v.yR0, yR1:v.yR1,
+      y0:v.yL0, y1:v.yL1,   // legacy aliases (left axis)
+      hasR, trs, unit };
+
+  const cr=$('clipRect');
+  cr.setAttribute('x',P.l); cr.setAttribute('y',P.t);
+  cr.setAttribute('width',P.w); cr.setAttribute('height',P.h);
+  const ov=$('overlay');
+  ov.setAttribute('x',P.l); ov.setAttribute('y',P.t);
+  ov.setAttribute('width',P.w); ov.setAttribute('height',P.h);
+  $('clipUnitC').setAttribute('r',0);
+
+  const xt=SNP.ticks(P.x0,P.x1,Math.max(3,Math.round(P.w/110)));
+  const ytL=SNP.ticks(P.yL0,P.yL1,Math.max(3,Math.round(P.h/56)));
+  const ytR=hasR? SNP.ticks(P.yR0,P.yR1,Math.max(3,Math.round(P.h/56))) : [];
+
+  // grid rides the LEFT axis (two overlaid grids are unreadable)
+  let g='';
+  if (state.grid){
+    for (const x of xt){ const X=xToPx(x); g+='<line x1="'+X+'" y1="'+P.t+'" x2="'+X+'" y2="'+(P.t+P.h)+'" stroke="var(--grid)" stroke-width="1"/>'; }
+    for (const y of ytL){ const Y=yPxAx(y,'L'); g+='<line x1="'+P.l+'" y1="'+Y+'" x2="'+(P.l+P.w)+'" y2="'+Y+'" stroke="var(--grid)" stroke-width="1"/>'; }
+  }
+  $('gridG').innerHTML=g;
+
+  // axes + ticks
+  let a='<rect x="'+P.l+'" y="'+P.t+'" width="'+P.w+'" height="'+P.h+'" fill="none" stroke="var(--axis)" stroke-width="1"/>';
+  for (const x of xt){
+    const X=xToPx(x);
+    a+='<line x1="'+X+'" y1="'+(P.t+P.h)+'" x2="'+X+'" y2="'+(P.t+P.h+5)+'" stroke="var(--axis)"/>'
+     +'<text x="'+X+'" y="'+(P.t+P.h+18)+'" text-anchor="middle">'+SNP.fmtNum(x/unit.mult,6)+'</text>';
+  }
+  for (const y of ytL){
+    const Y=yPxAx(y,'L');
+    a+='<line x1="'+(P.l-5)+'" y1="'+Y+'" x2="'+P.l+'" y2="'+Y+'" stroke="var(--axis)"/>'
+     +'<text x="'+(P.l-9)+'" y="'+(Y+3.5)+'" text-anchor="end">'+SNP.fmtNum(y,5)+'</text>';
+  }
+  for (const y of ytR){
+    const Y=yPxAx(y,'R');
+    a+='<line x1="'+(P.l+P.w)+'" y1="'+Y+'" x2="'+(P.l+P.w+5)+'" y2="'+Y+'" stroke="var(--axis)"/>'
+     +'<text x="'+(P.l+P.w+8)+'" y="'+(Y+3.5)+'" text-anchor="start">'+SNP.fmtNum(y,5)+'</text>';
+  }
+  a+='<text class="axislabel" x="'+(P.l+P.w/2)+'" y="'+(P.t+P.h+36)+'" text-anchor="middle">Frequency ('+unit.name+')</text>';
+  a+='<text class="axislabel" x="14" y="'+(P.t+P.h/2)+'" text-anchor="middle" transform="rotate(-90 14 '+(P.t+P.h/2)+')">'
+    +esc(FORMAT_LABELS[state.format])+(hasR?' — left':'')+'</text>';
+  if (hasR){
+    const rx=P.l+P.w+60, ry=P.t+P.h/2;
+    a+='<text class="axislabel" x="'+rx+'" y="'+ry+'" text-anchor="middle" transform="rotate(90 '+rx+' '+ry+')">'
+      +esc(FORMAT_LABELS[state.format])+' — right</text>';
+  }
+  $('axesG').innerHTML=a;
+
+  // trace paths — full resolution, no decimation, NaN => pen up
+  let ph='';
+  if (!trs.length){
+    ph='<text x="'+(P.l+P.w/2)+'" y="'+(P.t+P.h/2)+'" text-anchor="middle" style="font-size:13px" fill="var(--ink3)">no traces selected — import a file and tick S-parameters on the left</text>';
+  }
+  for (const t of trs){
+    let d='', pen=false, iso='';
+    const N=t.x.length;
+    for (let k=0;k<N;k++){
+      const yv=t.y[k];
+      if (!isFinite(yv)){ pen=false; continue; }
+      // an isolated finite sample (NaN/edge on both sides) emits a bare 'M', which
+      // SVG renders as NOTHING — draw it as a dot so hoverable data is visible data
+      if ((k===0||!isFinite(t.y[k-1])) && (k===N-1||!isFinite(t.y[k+1])))
+        iso+='<circle cx="'+xToPx(t.x[k]).toFixed(2)+'" cy="'+yPxAx(yv,t.axis).toFixed(2)+'" r="2.4" fill="'+t.color+'"/>';
+      d+=(pen?'L':'M')+xToPx(t.x[k]).toFixed(2)+' '+yPxAx(yv,t.axis).toFixed(2);
+      pen=true;
+    }
+    ph+=iso+'<path d="'+d+'" fill="none" stroke="'+t.color+'" stroke-width="2"'
+      +(t.dash?' stroke-dasharray="'+t.dash+'"':'')+' stroke-linejoin="round" stroke-linecap="round"/>';
+  }
+  $('pathsG').innerHTML=ph;
+}
+
+function renderSmith(W,H,trs,unit){
+  const m={ l:14, r:14, t:12, b:16 };
+  const w=Math.max(10,W-m.l-m.r), h=Math.max(10,H-m.t-m.b);
+  const sv=state.smithView;
+  const side=Math.max(40, Math.min(w,h));
+  const cx0=m.l+w/2, cy0=m.t+h/2;
+  const sc=(side/2)/sv.r;
+  const gx=re=>cx0+(re-sv.cx)*sc, gy=im=>cy0-(im-sv.cy)*sc;
+  P={ mode:'smith', l:m.l, t:m.t, w, h, cx0, cy0, sc, gx, gy, trs, unit,
+      segs: trs.map(t=>({ t, seg:smithSamples(t) })) };
+
+  const cr=$('clipRect');
+  cr.setAttribute('x',P.l); cr.setAttribute('y',P.t);
+  cr.setAttribute('width',P.w); cr.setAttribute('height',P.h);
+  const ov=$('overlay');
+  ov.setAttribute('x',P.l); ov.setAttribute('y',P.t);
+  ov.setAttribute('width',P.w); ov.setAttribute('height',P.h);
+  const uc=$('clipUnitC');
+  uc.setAttribute('cx',gx(0)); uc.setAttribute('cy',gy(0)); uc.setAttribute('r',sc);
+
+  // constant-r circles and constant-x arcs, clipped to |Gamma| <= 1
+  let g='';
+  if (state.grid){
+    const geo=SNP.smithGridGeometry();
+    for (const c of geo.circles)
+      g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="var(--grid)" stroke-width="1"/>';
+    for (const c of geo.arcs)
+      g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="var(--grid)" stroke-width="1"/>';
+  }
+  $('gridG').innerHTML= g? '<g clip-path="url(#clipUnit)">'+g+'</g>' : '';
+
+  const inPlot=(X,Y)=> X>P.l-2&&X<P.l+P.w+2&&Y>P.t-2&&Y<P.t+P.h+2;
+  let a='<circle cx="'+gx(0)+'" cy="'+gy(0)+'" r="'+sc+'" fill="none" stroke="var(--axis)" stroke-width="1.2"/>'
+    +'<g clip-path="url(#clipUnit)"><line x1="'+gx(-1)+'" y1="'+gy(0)+'" x2="'+gx(1)+'" y2="'+gy(0)+'" stroke="var(--axis)" stroke-width="1"/></g>';
+  if (state.grid){
+    for (const rv of [0.2,0.5,1,2,5]){
+      const X=gx((rv-1)/(rv+1)), Y=gy(0);
+      if (inPlot(X,Y)) a+='<text x="'+X+'" y="'+(Y+12)+'" text-anchor="middle" style="font-size:10px">'+rv+'</text>';
+    }
+    for (const xv of [0.2,0.5,1,2,5]){
+      const lab= xv===1? 'j' : 'j'+xv;
+      const p1=SNP.smithXLabelPoint(xv), p2=SNP.smithXLabelPoint(-xv);
+      const X1=gx(p1.re*1.08), Y1=gy(p1.im*1.08), X2=gx(p2.re*1.08), Y2=gy(p2.im*1.08);
+      if (inPlot(X1,Y1)) a+='<text x="'+X1+'" y="'+(Y1+3)+'" text-anchor="middle" style="font-size:10px">'+lab+'</text>';
+      if (inPlot(X2,Y2)) a+='<text x="'+X2+'" y="'+(Y2+3)+'" text-anchor="middle" style="font-size:10px">-'+lab+'</text>';
+    }
+  }
+  a+='<text class="legendnote" x="'+(P.l+4)+'" y="'+(P.t+P.h-5)+'">grid labels: z/Z0 · X range = frequency window · drag = zoom</text>';
+  $('axesG').innerHTML=a;
+
+  // loci: raw complex samples, full resolution, no interpolation
+  let ph='';
+  if (!trs.length){
+    ph='<text x="'+(P.l+P.w/2)+'" y="'+(P.t+P.h/2)+'" text-anchor="middle" style="font-size:13px" fill="var(--ink3)">no traces selected</text>';
+  }
+  for (const e of P.segs){
+    const t=e.t, seg=e.seg;
+    if (!seg.n) continue;
+    let d='';
+    for (let q=0;q<seg.n;q++) d+=(q?'L':'M')+gx(seg.re[q]).toFixed(2)+' '+gy(seg.im[q]).toFixed(2);
+    ph+='<path d="'+d+'" fill="none" stroke="'+t.color+'" stroke-width="2"'
+      +(t.dash?' stroke-dasharray="'+t.dash+'"':'')+' stroke-linejoin="round"/>'
+      +'<circle cx="'+gx(seg.re[0]).toFixed(2)+'" cy="'+gy(seg.im[0]).toFixed(2)+'" r="3" fill="'+chrome().dot+'" stroke="'+t.color+'" stroke-width="1.6"/>'
+      +'<circle cx="'+gx(seg.re[seg.n-1]).toFixed(2)+'" cy="'+gy(seg.im[seg.n-1]).toFixed(2)+'" r="3" fill="'+t.color+'"/>';
+  }
+  $('pathsG').innerHTML=ph;
+}
+
+function renderLegend(){
+  const g=$('legendG');
+  if (!state.legend || !P || !P.trs.length){ g.innerHTML=''; return; }
+  const entries=P.trs.map(t=>({ t,
+    label:keyLabel(t.key)+' · '+shortName(t.f.name,16)+(P.mode==='xy'&&t.axis==='R'?'  →R':'') }));
+  const lineH=17, pad=9, sample=26;
+  const note= P.mode==='smith'
+    ? 'color = S-param · dash = file · ○ start ● end'
+    : 'color = S-param · dash = file · click hides';
+  const wMax=Math.max(Math.max(...entries.map(e=>e.label.length))*6.6 + sample + 30, note.length*5.3 + 18);
+  const w=Math.min(wMax, 320);
+  const h=entries.length*lineH + pad*2 + 13;
+  const x=P.l+P.w-w-10, y=P.t+10;
+  let s='<g style="cursor:pointer">'
+    +'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="7" fill="'+chrome().panel+'" stroke="'+chrome().panelStroke+'"/>';
+  entries.forEach((e,i)=>{
+    const yy=y+pad+i*lineH+9;
+    s+='<g data-leg="'+e.t.f.id+'|'+e.t.key+'">'
+      +'<rect x="'+x+'" y="'+(yy-9)+'" width="'+w+'" height="'+lineH+'" fill="transparent"/>'
+      +'<line x1="'+(x+9)+'" y1="'+yy+'" x2="'+(x+9+sample)+'" y2="'+yy+'" stroke="'+e.t.color+'" stroke-width="2.5"'
+      +(e.t.dash?' stroke-dasharray="'+e.t.dash+'"':'')+'/>'
+      +'<text class="legendtext" x="'+(x+9+sample+7)+'" y="'+(yy+3.5)+'">'+esc(e.label)+'</text></g>';
+  });
+  s+='<text class="legendnote" x="'+(x+9)+'" y="'+(y+h-6)+'">'+note+'</text></g>';
+  g.innerHTML=s;
+  g.querySelectorAll('[data-leg]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const [fid,key]=splitSel(el.dataset.leg);
+      toggleSel(fid,key,false);
+    });
+  });
+}
+
+function markerText(m){
+  const f=fileById(m.fid);
+  if (!f) return '';
+  const x=f.parsed.freqHz[m.idx], y=traceY(f,m.key)[m.idx];
+  const u=P?P.unit:dataUnit();
+  return keyLabel(m.key)+' · '+shortName(f.name,12)+' — '
+    +SNP.fmtNum(x/u.mult,6)+' '+u.name+', '+SNP.fmtNum(y,5)+' '+unitSuffix();
+}
+function unitSuffix(){
+  return state.format==='db'?'dB':(state.format==='deg'||state.format==='degU')?'°':'';
+}
+function renderPinnedMarkers(){
+  const g=$('markersG');
+  if (!P){ g.innerHTML=''; return; }
+  const ch=chrome();
+  let s='';
+  state.markers.forEach((m,i)=>{
+    const f=fileById(m.fid);
+    if (!f || !state.sel.has(m.fid+'|'+m.key)) return;
+    const col=colorFor(m.key);
+    let X, Y, lab;
+    if (P.mode==='smith'){
+      const Sm=f.parsed.S[m.key];
+      const re=Sm.re[m.idx], im=Sm.im[m.idx];
+      if (!isFinite(re)||!isFinite(im)) return;
+      X=P.gx(re); Y=P.gy(im);
+      lab='M'+(i+1)+': '+SNP.fmtNum(f.parsed.freqHz[m.idx]/P.unit.mult,5)+' '+P.unit.name
+        +' · '+SNP.fmtNum(Math.hypot(re,im),4)+'∠'+SNP.fmtNum(Math.atan2(im,re)*180/Math.PI,4)+'°';
+    } else {
+      const x=f.parsed.freqHz[m.idx], y=traceY(f,m.key)[m.idx];
+      if (!isFinite(y)) return;
+      X=xToPx(x); Y=yPxAx(y, axisOf(m.fid,m.key));
+      lab='M'+(i+1)+': '+SNP.fmtNum(x/P.unit.mult,5)+' '+P.unit.name+' / '+SNP.fmtNum(y,4)+' '+unitSuffix();
+    }
+    if (X<P.l-2||X>P.l+P.w+2||Y<P.t-2||Y>P.t+P.h+2) return;
+    const ly=(i%2===0)? Y-14 : Y+22;
+    const lw=lab.length*6.4+10;
+    const lx=Math.max(P.l+2, Math.min(X-lw/2, P.l+P.w-lw-2));
+    if (P.mode==='xy')
+      s+='<line x1="'+X+'" y1="'+(P.t)+'" x2="'+X+'" y2="'+(P.t+P.h)+'" stroke="'+col+'" stroke-width="1" opacity=".25" stroke-dasharray="3 3"/>';
+    s+='<circle cx="'+X+'" cy="'+Y+'" r="4.5" fill="'+col+'" stroke="'+ch.dot+'" stroke-width="1.5"/>'
+      +'<rect x="'+lx+'" y="'+(ly-11)+'" width="'+lw+'" height="15" rx="4" fill="'+ch.panel+'" stroke="'+ch.panelStroke+'"/>'
+      +'<text x="'+(lx+5)+'" y="'+(ly)+'" style="font-size:10.5px">'+esc(lab)+'</text>';
+  });
+  g.innerHTML=s;
+  renderMarkerPanel();
+}
+function renderMarkerPanel(){
+  const el=$('markerList');
+  if (!state.markers.length){
+    el.innerHTML='<div class="empty">Click on a trace to pin a marker.</div>';
+    return;
+  }
+  const u=P?P.unit:dataUnit();
+  let h=state.markers.map((m,i)=>{
+    return '<div class="markerrow"><span class="chip" style="background:'+chipColor(m.key)+'"></span>'
+      +'<span class="mlab">M'+(i+1)+' · '+esc(markerText(m))+'</span>'
+      +'<button class="rm" data-mrm="'+m.id+'">✕</button></div>';
+  }).join('');
+  if (state.markers.length>=2){
+    const a=state.markers[state.markers.length-2], b=state.markers[state.markers.length-1];
+    const fa=fileById(a.fid), fb=fileById(b.fid);
+    if (fa&&fb){
+      const dx=(fb.parsed.freqHz[b.idx]-fa.parsed.freqHz[a.idx])/u.mult;
+      const dy=traceY(fb,b.key)[b.idx]-traceY(fa,a.key)[a.idx];
+      h+='<div class="deltarow">Δ (M'+(state.markers.length-1)+'→M'+state.markers.length+'): '
+        +SNP.fmtNum(dx,5)+' '+u.name+' , '+SNP.fmtNum(dy,5)+' '+unitSuffix()+'</div>';
+    }
+  }
+  h+='<div class="quickbtns"><button class="btn ghost" id="clearMarksBtn">clear all</button></div>';
+  el.innerHTML=h;
+  el.querySelectorAll('[data-mrm]').forEach(b=>b.onclick=()=>{
+    state.markers=state.markers.filter(m=>m.id!==b.dataset.mrm);
+    renderPinnedMarkers();
+  });
+  const cb=$('clearMarksBtn');
+  if (cb) cb.onclick=()=>{ state.markers=[]; renderPinnedMarkers(); };
+}
+
+// ---------- hover / live markers ----------
+let hoverFocus=null;
+function placeTooltip(ev, html){
+  const tt=$('tooltip');
+  tt.innerHTML=html;
+  tt.style.display='block';
+  const wrapR=$('plotwrap').getBoundingClientRect();
+  let tx=ev.clientX-wrapR.left+16, ty=ev.clientY-wrapR.top+14;
+  const tw=tt.offsetWidth, th=tt.offsetHeight;
+  if (tx+tw>wrapR.width-8) tx=ev.clientX-wrapR.left-tw-14;
+  if (ty+th>wrapR.height-8) ty=ev.clientY-wrapR.top-th-10;
+  tt.style.left=tx+'px'; tt.style.top=ty+'px';
+}
+function onHover(ev){
+  if (!P || !P.trs.length){ return; }
+  const r=svg.getBoundingClientRect();
+  const mx=ev.clientX-r.left, my=ev.clientY-r.top;
+  if (mx<P.l||mx>P.l+P.w||my<P.t||my>P.t+P.h){ clearHover(); return; }
+  if (P.mode==='smith'){ smithHover(ev,mx,my); return; }
+  const fx=pxToX(mx);
+  let best=null; const dots=[];
+  for (const t of P.trs){
+    const idx=SNP.nearestIdx(t.x, fx);
+    if (idx<0) continue;
+    const yv=t.y[idx];
+    if (!isFinite(yv)) continue;
+    const X=xToPx(t.x[idx]), Y=yPxAx(yv, t.axis);
+    if (X<P.l-4||X>P.l+P.w+4) continue;
+    const dist=Math.hypot(X-mx, Y-my);
+    const dot={ t, idx, X, Y, dist };
+    dots.push(dot);
+    if (!best||dist<best.dist) best=dot;
+  }
+  if (!dots.length){ clearHover(); return; }
+  hoverFocus = best.dist<=36 ? best : null;
+
+  let s='<line x1="'+best.X+'" y1="'+P.t+'" x2="'+best.X+'" y2="'+(P.t+P.h)+'" stroke="'+chrome().cross+'" stroke-width="1" stroke-dasharray="4 4" opacity=".8"/>';
+  for (const d of dots){
+    if (d.Y<P.t-4||d.Y>P.t+P.h+4) continue;
+    const isF = hoverFocus && d===hoverFocus;
+    s+='<circle cx="'+d.X+'" cy="'+d.Y+'" r="'+(isF?5:3.2)+'" fill="'+d.t.color+'"'
+      +' stroke="'+chrome().dot+'" stroke-width="1.2" opacity="'+(isF?1:.85)+'"/>';
+  }
+  $('hoverG').innerHTML=s;
+
+  const rows=[...dots].sort((a,b)=> (a===hoverFocus?-1:b===hoverFocus?1:0) || keyCmp(a.t.key,b.t.key));
+  const headFreq=best.t.x[best.idx];
+  let h='<div class="tfreq">'+SNP.fmtNum(headFreq/P.unit.mult,6)+' '+P.unit.name
+    +' <span style="color:var(--ink3)">(sample '+best.idx+')</span></div>';
+  rows.slice(0,10).forEach(d=>{
+    // each trace snaps to ITS OWN nearest sample — when its frequency differs from
+    // the header (mixed grids), say so instead of silently misattributing the value
+    const own=d.t.x[d.idx];
+    const at= own!==headFreq
+      ? ' <span style="color:var(--ink3)">@ '+SNP.fmtNum(own/P.unit.mult,5)+'</span>' : '';
+    const rTag= d.t.axis==='R' ? ' <span style="color:var(--ink3)">→R</span>' : '';
+    h+='<div class="trow'+(d===hoverFocus?' focus':'')+'">'
+      +'<span class="swatch" style="border-top-style:'+(d.t.dash?'dashed':'solid')+'; color:'+d.t.color+'"></span>'
+      +keyLabel(d.t.key)+' · '+esc(shortName(d.t.f.name,14))+rTag
+      +'<span class="val">'+SNP.fmtNum(d.t.y[d.idx],5)+' '+unitSuffix()+at+'</span></div>';
+  });
+  if (rows.length>10) h+='<div class="trow" style="color:var(--ink3)">… '+(rows.length-10)+' more</div>';
+  placeTooltip(ev,h);
+}
+function smithHover(ev,mx,my){
+  let best=null;
+  for (const e of P.segs){
+    const seg=e.seg;
+    for (let q=0;q<seg.n;q++){
+      const X=P.gx(seg.re[q]), Y=P.gy(seg.im[q]);
+      const dist=Math.hypot(X-mx, Y-my);
+      if (!best||dist<best.dist) best={ t:e.t, idx:seg.idxs[q], re:seg.re[q], im:seg.im[q], X, Y, dist };
+    }
+  }
+  if (!best||best.dist>36){ clearHover(); return; }
+  hoverFocus=best;
+  $('hoverG').innerHTML=
+    '<circle cx="'+best.X+'" cy="'+best.Y+'" r="6" fill="none" stroke="'+best.t.color+'" stroke-width="2"/>'
+    +'<circle cx="'+best.X+'" cy="'+best.Y+'" r="2.6" fill="'+best.t.color+'"/>';
+  const f=best.t.f;
+  const mag=Math.hypot(best.re,best.im), ang=Math.atan2(best.im,best.re)*180/Math.PI;
+  const [pi,pj]=best.t.key.split(',');
+  let h='<div class="tfreq">'+SNP.fmtNum(f.parsed.freqHz[best.idx]/P.unit.mult,6)+' '+P.unit.name
+    +' <span style="color:var(--ink3)">(sample '+best.idx+')</span></div>'
+    +'<div class="trow focus"><span class="swatch" style="border-top-style:'+(best.t.dash?'dashed':'solid')+'; color:'+best.t.color+'"></span>'
+    +keyLabel(best.t.key)+' · '+esc(shortName(f.name,14))+'</div>'
+    +'<div class="trow">Γ (mag ∠ deg)<span class="val">'+SNP.fmtNum(mag,5)+' ∠ '+SNP.fmtNum(ang,5)+'°</span></div>'
+    +'<div class="trow">Γ (re, im)<span class="val">'+SNP.fmtNum(best.re,5)+', '+SNP.fmtNum(best.im,5)+'</span></div>';
+  if (pi===pj){
+    const z=SNP.gammaToZ(best.re,best.im,f.parsed.z0);
+    h+= z ? '<div class="trow">Z into port '+pi+'<span class="val">'+SNP.fmtNum(z.r,5)+' + j('+SNP.fmtNum(z.x,5)+') Ω</span></div>'
+          : '<div class="trow">Z into port '+pi+'<span class="val">open (Γ→1)</span></div>';
+  }
+  placeTooltip(ev,h);
+}
+function clearHover(){
+  hoverFocus=null;
+  $('hoverG').innerHTML='';
+  $('tooltip').style.display='none';
+}
+
+// ---------- click marker + drag zoom ----------
+let drag=null, clickTimer=null;
+const overlay=$('overlay');
+overlay.addEventListener('mousemove',ev=>{
+  if (drag){ dragMove(ev); return; }
+  onHover(ev);
+});
+overlay.addEventListener('mouseleave',()=>{ if(!drag) clearHover(); });
+overlay.addEventListener('mousedown',ev=>{
+  if (ev.button!==0) return;
+  const r=svg.getBoundingClientRect();
+  drag={ x0:ev.clientX-r.left, y0:ev.clientY-r.top, x1:ev.clientX-r.left, y1:ev.clientY-r.top, moved:false };
+  window.addEventListener('mousemove',dragMove);
+  window.addEventListener('mouseup',dragUp);
+});
+function dragMove(ev){
+  if (!drag) return;
+  const r=svg.getBoundingClientRect();
+  drag.x1=Math.max(P.l,Math.min(P.l+P.w, ev.clientX-r.left));
+  drag.y1=Math.max(P.t,Math.min(P.t+P.h, ev.clientY-r.top));
+  if (Math.abs(drag.x1-drag.x0)>4||Math.abs(drag.y1-drag.y0)>4) drag.moved=true;
+  const b=$('bandRect');
+  if (drag.moved){
+    clearHover();
+    b.setAttribute('x',Math.min(drag.x0,drag.x1));
+    b.setAttribute('y',Math.min(drag.y0,drag.y1));
+    b.setAttribute('width',Math.abs(drag.x1-drag.x0));
+    b.setAttribute('height',Math.abs(drag.y1-drag.y0));
+    b.setAttribute('visibility','visible');
+  }
+}
+function dragUp(ev){
+  window.removeEventListener('mousemove',dragMove);
+  window.removeEventListener('mouseup',dragUp);
+  $('bandRect').setAttribute('visibility','hidden');
+  if (!drag) return;
+  const d=drag; drag=null;
+  if (d.moved){
+    const wx=Math.abs(d.x1-d.x0), wy=Math.abs(d.y1-d.y0);
+    if (P.mode==='smith'){
+      if (wx>8||wy>8){
+        const sv=state.smithView;
+        const reA=sv.cx+(Math.min(d.x0,d.x1)-P.cx0)/P.sc, reB=sv.cx+(Math.max(d.x0,d.x1)-P.cx0)/P.sc;
+        const imA=sv.cy-(Math.max(d.y0,d.y1)-P.cy0)/P.sc, imB=sv.cy-(Math.min(d.y0,d.y1)-P.cy0)/P.sc;
+        state.smithView={ cx:(reA+reB)/2, cy:(imA+imB)/2, r:Math.max((reB-reA)/2,(imB-imA)/2, 1e-4) };
+        renderPlot();
+      }
+      return;
+    }
+    if (wx>8){ state.view.xmin=pxToX(Math.min(d.x0,d.x1)); state.view.xmax=pxToX(Math.max(d.x0,d.x1)); }
+    if (wy>8){
+      // the band is one pixel gesture — BOTH axes re-fit to it through their own scales
+      state.view.ymin=pxToYAx(Math.max(d.y0,d.y1),'L');
+      state.view.ymax=pxToYAx(Math.min(d.y0,d.y1),'L');
+      if (P.hasR){
+        state.view.yrmin=pxToYAx(Math.max(d.y0,d.y1),'R');
+        state.view.yrmax=pxToYAx(Math.min(d.y0,d.y1),'R');
+      }
+    }
+    renderPlot();
+    return;
+  }
+  // plain click: pin a marker on the focused trace (debounced so dblclick != 2 markers)
+  if (hoverFocus){
+    const hf=hoverFocus;
+    clearTimeout(clickTimer);
+    clickTimer=setTimeout(()=>{
+      // the trace may have been deselected / its file removed since the click armed
+      if (!fileById(hf.t.f.id) || !state.sel.has(hf.t.f.id+'|'+hf.t.key)) return;
+      state.markers.push({ id:'m'+(++markerCounter), fid:hf.t.f.id, key:hf.t.key, idx:hf.idx });
+      renderPinnedMarkers();
+    }, 260);
+  }
+}
+overlay.addEventListener('dblclick',()=>{
+  clearTimeout(clickTimer);
+  state.view={ xmin:null,xmax:null,ymin:null,ymax:null,yrmin:null,yrmax:null };
+  state.smithView={ cx:0, cy:0, r:1.15 };
+  renderPlot();
+});
+// pointer over the legend: the overlay gets no mousemove there, so stale hover
+// graphics would linger — clear them (the legend sits above the overlay by design)
+$('legendG').addEventListener('mousemove',()=>{ if (!drag) clearHover(); });
+// releasing the mouse OUTSIDE the browser window never delivers mouseup — disarm on blur
+window.addEventListener('blur',()=>{
+  if (drag){
+    drag=null;
+    window.removeEventListener('mousemove',dragMove);
+    window.removeEventListener('mouseup',dragUp);
+    $('bandRect').setAttribute('visibility','hidden');
+  }
+});
+
+// ---------- range fields ----------
+function syncRangeFields(){
+  const u=P?P.unit:dataUnit();
+  $('xUnitLbl').textContent='('+u.name+')'+(state.plotMode==='smith'?' — freq window':'');
+  $('yUnitLbl').textContent= unitSuffix()?'('+unitSuffix()+')':'';
+  $('xminF').value = state.view.xmin==null?'':SNP.fmtNum(state.view.xmin/u.mult,6);
+  $('xmaxF').value = state.view.xmax==null?'':SNP.fmtNum(state.view.xmax/u.mult,6);
+  $('yminF').value = state.view.ymin==null?'':SNP.fmtNum(state.view.ymin,6);
+  $('ymaxF').value = state.view.ymax==null?'':SNP.fmtNum(state.view.ymax,6);
+  $('yrminF').value = state.view.yrmin==null?'':SNP.fmtNum(state.view.yrmin,6);
+  $('yrmaxF').value = state.view.yrmax==null?'':SNP.fmtNum(state.view.yrmax,6);
+}
+function normalizeView(){
+  // honor both typed values; correct only their order, so the fields and the axis agree
+  const v=state.view;
+  if (v.xmin!=null&&v.xmax!=null&&v.xmin>v.xmax){ const t=v.xmin; v.xmin=v.xmax; v.xmax=t; }
+  if (v.ymin!=null&&v.ymax!=null&&v.ymin>v.ymax){ const t=v.ymin; v.ymin=v.ymax; v.ymax=t; }
+  if (v.yrmin!=null&&v.yrmax!=null&&v.yrmin>v.yrmax){ const t=v.yrmin; v.yrmin=v.yrmax; v.yrmax=t; }
+}
+function bindRange(id, apply){
+  $(id).addEventListener('change',()=>{
+    const t=$(id).value.trim();
+    apply(t===''?null:parseFloat(t));
+    normalizeView();
+    renderPlot();
+  });
+}
+const finiteOrNull=v=>(v==null||!isFinite(v))?null:v;
+// finiteness is checked AFTER the unit multiply — 1e300 GHz is Infinity in Hz
+bindRange('xminF', v=>{ state.view.xmin = finiteOrNull(v==null?null:v*dataUnit().mult); });
+bindRange('xmaxF', v=>{ state.view.xmax = finiteOrNull(v==null?null:v*dataUnit().mult); });
+bindRange('yminF', v=>{ state.view.ymin = finiteOrNull(v); });
+bindRange('ymaxF', v=>{ state.view.ymax = finiteOrNull(v); });
+bindRange('yrminF', v=>{ state.view.yrmin = finiteOrNull(v); });
+bindRange('yrmaxF', v=>{ state.view.yrmax = finiteOrNull(v); });
+$('xAutoBtn').onclick=()=>{ state.view.xmin=state.view.xmax=null; renderPlot(); };
+$('yAutoBtn').onclick=()=>{ state.view.ymin=state.view.ymax=null; renderPlot(); };
+$('yrAutoBtn').onclick=()=>{ state.view.yrmin=state.view.yrmax=null; renderPlot(); };
+$('resetViewBtn').onclick=()=>{
+  state.view={xmin:null,xmax:null,ymin:null,ymax:null,yrmin:null,yrmax:null};
+  state.smithView={ cx:0, cy:0, r:1.15 };
+  renderPlot();
+};
+
+// ---------- header controls ----------
+$('formatSel').addEventListener('change',()=>{
+  state.format=$('formatSel').value;
+  // y units changed — stale ranges would blank the plot
+  state.view.ymin=state.view.ymax=state.view.yrmin=state.view.yrmax=null;
+  renderPlot();
+});
+$('modeSel').addEventListener('change',()=>{ state.plotMode=$('modeSel').value; renderPlot(); });
+$('themeSel').addEventListener('change',()=>{ state.plotTheme=$('themeSel').value; renderPlot(); });
+$('gridChk').addEventListener('change',()=>{ state.grid=$('gridChk').checked; renderPlot(); });
+$('legendChk').addEventListener('change',()=>{ state.legend=$('legendChk').checked; renderPlot(); });
+
+// ---------- file input / drop ----------
+$('openBtn').onclick=()=>$('fileInput').click();
+$('dropzone').onclick=()=>$('fileInput').click();
+$('fileInput').addEventListener('change',async ev=>{
+  for (const file of ev.target.files) loadText(file.name, await file.text());
+  ev.target.value='';
+});
+['dragover','dragenter'].forEach(t=>document.addEventListener(t,ev=>{
+  ev.preventDefault();
+  $('dropzone').classList.add('drag');
+}));
+['dragleave','drop'].forEach(t=>document.addEventListener(t,ev=>{
+  if (t==='drop') ev.preventDefault();
+  $('dropzone').classList.remove('drag');
+}));
+document.addEventListener('drop',async ev=>{
+  ev.preventDefault();
+  for (const file of ev.dataTransfer.files) loadText(file.name, await file.text());
+});
+
+// ---------- figure export: copy / PNG @ 900 dpi / fully vector PDF ----------
+function themeBgColor(){
+  return state.plotTheme==='light' ? '#ffffff' : (getComputedStyle(document.body).backgroundColor || '#0b1220');
+}
+function bakeSvgClone(){
+  // a serialized SVG loses the document's CSS (variables, text fill, fonts) —
+  // bake every computed style onto explicit attributes first
+  const src=$('plot');
+  const rect=src.getBoundingClientRect();
+  const clone=src.cloneNode(true);
+  clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  clone.setAttribute('width',rect.width); clone.setAttribute('height',rect.height);
+  clone.setAttribute('viewBox','0 0 '+rect.width+' '+rect.height);
+  const srcEls=src.querySelectorAll('*'), dstEls=clone.querySelectorAll('*');
+  for (let i=0;i<srcEls.length;i++){
+    const d=dstEls[i];
+    if (!d || d.closest('defs')) continue;
+    const cs=getComputedStyle(srcEls[i]);
+    const tag=d.tagName.toLowerCase();
+    d.setAttribute('fill', tag==='line'?'none':cs.fill);
+    d.setAttribute('stroke',cs.stroke);
+    if (cs.stroke!=='none'){ d.setAttribute('stroke-width',cs.strokeWidth); }
+    if (cs.strokeDasharray && cs.strokeDasharray!=='none') d.setAttribute('stroke-dasharray',cs.strokeDasharray);
+    if (cs.opacity!=='1') d.setAttribute('opacity',cs.opacity);
+    if (tag==='text'){
+      d.setAttribute('font-family',cs.fontFamily);
+      d.setAttribute('font-size',cs.fontSize);
+      d.setAttribute('font-weight',cs.fontWeight);
+      d.removeAttribute('class');
+    }
+  }
+  for (const id of ['overlay','bandRect','hoverG'])
+    { const e=clone.querySelector('#'+id); if (e) e.remove(); }
+  return { clone, w:rect.width, h:rect.height };
+}
+const CRC_T=(()=>{ const t=new Uint32Array(256);
+  for (let n=0;n<256;n++){ let c=n; for (let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+  return t; })();
+function crc32(bytes){ let c=0xFFFFFFFF; for (let i=0;i<bytes.length;i++) c=CRC_T[(c^bytes[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+function pngWithDpi(buf, dpi){
+  // insert a pHYs chunk right after IHDR so the file CARRIES its physical DPI
+  const src=new Uint8Array(buf);
+  const ppm=Math.round(dpi/0.0254);
+  const chunk=new Uint8Array(21), dv=new DataView(chunk.buffer);
+  dv.setUint32(0,9);
+  chunk.set([0x70,0x48,0x59,0x73],4);          // 'pHYs'
+  dv.setUint32(8,ppm); dv.setUint32(12,ppm); chunk[16]=1;   // per metre
+  dv.setUint32(17, crc32(chunk.subarray(4,17)));
+  const out=new Uint8Array(src.length+21);
+  out.set(src.subarray(0,33),0);               // signature + IHDR
+  out.set(chunk,33);
+  out.set(src.subarray(33),54);
+  return out;
+}
+async function plotToPngBlob(dpi){
+  const { clone, w, h }=bakeSvgClone();
+  const xml=new XMLSerializer().serializeToString(clone);
+  const svgUrl=URL.createObjectURL(new Blob([xml],{type:'image/svg+xml;charset=utf-8'}));
+  try {
+    const img=await new Promise((res,rej)=>{
+      const im=new Image();
+      im.onload=()=>res(im); im.onerror=()=>rej(new Error('SVG rasterization failed'));
+      im.src=svgUrl;
+    });
+    let scale=dpi/96;
+    const MAXA=2.4e8;                          // stay under browser canvas-area limits
+    if (w*h*scale*scale>MAXA) scale=Math.sqrt(MAXA/(w*h));
+    const cv=document.createElement('canvas');
+    cv.width=Math.round(w*scale); cv.height=Math.round(h*scale);
+    const ctx=cv.getContext('2d');
+    ctx.fillStyle=themeBgColor(); ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.drawImage(img,0,0,cv.width,cv.height);
+    const blob=await new Promise(res=>cv.toBlob(res,'image/png'));
+    if (!blob) throw new Error('canvas toBlob failed');
+    const realDpi=Math.round(96*scale);        // honest even when area-clamped
+    return { blob:new Blob([pngWithDpi(await blob.arrayBuffer(), realDpi)],{type:'image/png'}), dpi:realDpi };
+  } finally { URL.revokeObjectURL(svgUrl); }
+}
+
+// --- minimal vector PDF writer for the plot SVG's element vocabulary ---
+const PDF_CHAR_MAP={ '→':'->', 'Γ':'G', '∠':'<', 'Ω':'ohm', '○':'o', '●':'*',
+  'Δ':'d', '—':'-', '–':'-', '⇥':'>>', '…':'...', '₀':'0' };
+function pdfMap(s){ let o=''; for (const ch of String(s)) o+= PDF_CHAR_MAP[ch]!==undefined?PDF_CHAR_MAP[ch]:ch; return o; }
+function pdfEsc(s){
+  let o='';
+  for (const ch of s){
+    if (ch==='\\'||ch==='('||ch===')') o+='\\'+ch;
+    else { const cc=ch.charCodeAt(0); o+= cc>126 ? (cc<=255? '\\'+cc.toString(8).padStart(3,'0') : '?') : ch; }
+  }
+  return o;
+}
+function plotToPdfBlob(){
+  const src=$('plot');
+  const rect=src.getBoundingClientRect();
+  const W=rect.width, H=rect.height;
+  const rootInv=src.getScreenCTM().inverse();
+  const content=[], gsMap=new Map();
+  const num=v=>{ const n=+v; return Number.isFinite(n)? String(+n.toFixed(4)) : '0'; };
+  const colOf=c=>{
+    if (!c||c==='none'||c==='transparent') return null;
+    let m=/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(c);
+    if (m) return [ +m[1]/255, +m[2]/255, +m[3]/255, m[4]==null?1:+m[4] ];
+    m=/^#([0-9a-f]{6})$/i.exec(c);
+    if (m){ const v=parseInt(m[1],16); return [ ((v>>16)&255)/255, ((v>>8)&255)/255, (v&255)/255, 1 ]; }
+    return null;
+  };
+  const gsFor=(fa,sa)=>{
+    const k=fa.toFixed(3)+'|'+sa.toFixed(3);
+    if (!gsMap.has(k)) gsMap.set(k,{ name:'GS'+(gsMap.size+1), ca:fa, CA:sa });
+    return gsMap.get(k).name;
+  };
+  const circlePath=(cx,cy,r)=>{
+    const k=0.552284749831*r;
+    content.push(num(cx+r)+' '+num(cy)+' m');
+    content.push([cx+r,cy+k,cx+k,cy+r,cx,cy+r].map(num).join(' ')+' c');
+    content.push([cx-k,cy+r,cx-r,cy+k,cx-r,cy].map(num).join(' ')+' c');
+    content.push([cx-r,cy-k,cx-k,cy-r,cx,cy-r].map(num).join(' ')+' c');
+    content.push([cx+k,cy-r,cx+r,cy-k,cx+r,cy].map(num).join(' ')+' c');
+  };
+  const emitClip=(clipAttr)=>{
+    const idm=/url\(["']?#([^"')]+)/.exec(clipAttr||'');
+    const cp=idm && document.getElementById(idm[1]);
+    const sh=cp && cp.firstElementChild;
+    if (!sh) return;
+    const t=sh.tagName.toLowerCase();
+    if (t==='rect')
+      content.push([+sh.getAttribute('x')||0,+sh.getAttribute('y')||0,+sh.getAttribute('width')||0,+sh.getAttribute('height')||0].map(num).join(' ')+' re W n');
+    else if (t==='circle'){
+      circlePath(+sh.getAttribute('cx')||0,+sh.getAttribute('cy')||0,+sh.getAttribute('r')||0);
+      content.push('W n');
+    }
+  };
+  function emitShape(elm, tag, cs){
+    const op=parseFloat(cs.opacity); if (op===0) return;
+    const fill= tag==='line'? null : colOf(cs.fill);
+    const stroke=colOf(cs.stroke);
+    const fa= fill? fill[3]*op : 0;
+    const sa= stroke? stroke[3]*op : 0;
+    if (fa<=0 && sa<=0) return;
+    const m=rootInv.multiply(elm.getScreenCTM());
+    content.push('q '+[m.a,m.b,m.c,m.d,m.e,m.f].map(num).join(' ')+' cm');
+    if (fa<1||sa<1) content.push('/'+gsFor(fa,sa)+' gs');
+    if (fill&&fa>0) content.push(fill.slice(0,3).map(num).join(' ')+' rg');
+    if (stroke&&sa>0){
+      content.push(stroke.slice(0,3).map(num).join(' ')+' RG');
+      content.push(num(parseFloat(cs.strokeWidth)||1)+' w 1 J 1 j');
+      const da=cs.strokeDasharray;
+      content.push((da&&da!=='none')? '['+da.split(/[, ]+/).map(x=>num(parseFloat(x))).join(' ')+'] 0 d' : '[] 0 d');
+    }
+    const paint= (fa>0&&sa>0)?'B' : fa>0?'f' : 'S';
+    if (tag==='rect'){
+      content.push([+elm.getAttribute('x')||0,+elm.getAttribute('y')||0,+elm.getAttribute('width')||0,+elm.getAttribute('height')||0].map(num).join(' ')+' re '+paint);
+    } else if (tag==='line'){
+      content.push(num(+elm.getAttribute('x1')||0)+' '+num(+elm.getAttribute('y1')||0)+' m '
+        +num(+elm.getAttribute('x2')||0)+' '+num(+elm.getAttribute('y2')||0)+' l S');
+    } else if (tag==='circle'){
+      circlePath(+elm.getAttribute('cx')||0,+elm.getAttribute('cy')||0,+elm.getAttribute('r')||0);
+      content.push('h '+paint);
+    } else if (tag==='path'){
+      const d=elm.getAttribute('d')||'';
+      const rx=/([ML])\s*(-?[\d.eE+]+)[ ,](-?[\d.eE+]+)/g;
+      let mm, any=false;
+      while ((mm=rx.exec(d))){ content.push(num(mm[2])+' '+num(mm[3])+' '+(mm[1]==='M'?'m':'l')); any=true; }
+      if (any) content.push(paint);
+    } else if (tag==='text'){
+      const size=parseFloat(cs.fontSize)||11;
+      const bold=(parseInt(cs.fontWeight,10)||400)>=600;
+      const mapped=pdfMap(elm.textContent);
+      const wpx=0.6*size*mapped.length;        // Courier: exact monospaced advance
+      let tx=+elm.getAttribute('x')||0;
+      const ty=+elm.getAttribute('y')||0;
+      if (cs.textAnchor==='middle') tx-=wpx/2;
+      else if (cs.textAnchor==='end') tx-=wpx;
+      const ink= fill||[0,0,0,1];
+      content.push(ink.slice(0,3).map(num).join(' ')+' rg');
+      content.push('BT /'+(bold?'F2':'F1')+' '+num(size)+' Tf 1 0 0 -1 '+num(tx)+' '+num(ty)+' Tm ('+pdfEsc(mapped)+') Tj ET');
+    }
+    content.push('Q');
+  }
+  function walk(el){
+    for (const child of el.children){
+      const tag=child.tagName.toLowerCase();
+      if (tag==='defs') continue;
+      const id=child.id||'';
+      if (id==='overlay'||id==='bandRect'||id==='hoverG') continue;
+      const cs=getComputedStyle(child);
+      if (cs.display==='none'||cs.visibility==='hidden') continue;
+      if (tag==='g'){
+        const clip=child.getAttribute('clip-path');
+        if (clip){ content.push('q'); emitClip(clip); walk(child); content.push('Q'); }
+        else walk(child);
+        continue;
+      }
+      emitShape(child, tag, cs);
+    }
+  }
+  // page: px -> pt, y flipped so we draw in svg coordinates directly
+  content.push('0.75 0 0 -0.75 0 '+num(H*0.75)+' cm');
+  const bg=colOf(themeBgColor())||[1,1,1,1];
+  content.push('q '+bg.slice(0,3).map(num).join(' ')+' rg 0 0 '+num(W)+' '+num(H)+' re f Q');
+  walk(src);
+
+  const stream=content.join('\n');
+  const gsObjs=[...gsMap.values()];
+  const objs=[];
+  objs.push('<< /Type /Catalog /Pages 2 0 R >>');
+  objs.push('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  const gsRes= gsObjs.length? ' /ExtGState << '+gsObjs.map((g,i)=>'/'+g.name+' '+(7+i)+' 0 R').join(' ')+' >>' : '';
+  objs.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+num(W*0.75)+' '+num(H*0.75)+'] '
+    +'/Resources << /Font << /F1 5 0 R /F2 6 0 R >>'+gsRes+' >> /Contents 4 0 R >>');
+  objs.push('<< /Length '+stream.length+' >>\nstream\n'+stream+'\nendstream');
+  objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>');
+  objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>');
+  for (const g of gsObjs) objs.push('<< /Type /ExtGState /ca '+num(g.ca)+' /CA '+num(g.CA)+' >>');
+  let pdf='%PDF-1.4\n';
+  const offsets=[0];
+  objs.forEach((o,i)=>{ offsets.push(pdf.length); pdf+=(i+1)+' 0 obj\n'+o+'\nendobj\n'; });
+  const xref=pdf.length;
+  pdf+='xref\n0 '+(objs.length+1)+'\n0000000000 65535 f \n';
+  for (let i=1;i<=objs.length;i++) pdf+=String(offsets[i]).padStart(10,'0')+' 00000 n \n';
+  pdf+='trailer\n<< /Size '+(objs.length+1)+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n';
+  const bytes=new Uint8Array(pdf.length);
+  for (let i=0;i<pdf.length;i++) bytes[i]=pdf.charCodeAt(i)&0xFF;
+  return new Blob([bytes],{type:'application/pdf'});
+}
+
+async function saveBinaryFile(name, blob){
+  try {
+    const dl=(window.claude&&window.claude.use)? await window.claude.use('downloads') : null;
+    if (dl){
+      try { await dl.save({ filename:name, data:blob }); toast('⬇ saved '+name, false); }
+      catch(e){
+        const code=e&&e.code;
+        if (code==='declined') return;
+        if (code==='extension_not_enabled') toast('✗ this viewer does not allow .'+name.split('.').pop()+' saves — use PNG, or run the app locally', false);
+        else if (code==='rate_limited') toast('⏳ a save prompt is already open — try again shortly', false);
+        else toast('✗ save failed ('+(code||'error')+')', false);
+      }
+      return;
+    }
+  } catch(_){ /* fall through to plain download */ }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+function figBaseName(ext){
+  return 'sparam_'+(state.plotMode==='smith'?'smith':state.format)+'_'+new Date().toISOString().slice(0,10)+'.'+ext;
+}
+$('copyPngBtn').onclick=async()=>{
+  try {
+    const { blob, dpi }=await plotToPngBlob(900);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png':blob })]);
+    toast('⧉ figure copied as PNG ('+dpi+' dpi)', false);
+  } catch(e){ toast('✗ clipboard copy failed — use ⬇ png instead ('+((e&&e.message)||e)+')', false); }
+};
+$('savePngBtn').onclick=async()=>{
+  try { const { blob }=await plotToPngBlob(900); saveBinaryFile(figBaseName('png'), blob); }
+  catch(e){ toast('✗ PNG export failed: '+((e&&e.message)||e), false); }
+};
+$('savePdfBtn').onclick=()=>{
+  try { saveBinaryFile(figBaseName('pdf'), plotToPdfBlob()); }
+  catch(e){ toast('✗ PDF export failed: '+((e&&e.message)||e), false); }
+};
+
+// ---------- modals ----------
+const modalBack=$('modalBack'), modalBox=$('modalBox');
+let modalDownOnBack=false;
+function openModal(html){ modalBox.innerHTML=html; modalBack.hidden=false; }
+function closeModal(){ modalBack.hidden=true; modalBox.innerHTML=''; }
+modalBack.addEventListener('mousedown',ev=>{ modalDownOnBack = ev.target===modalBack; });
+modalBack.addEventListener('mouseup',ev=>{
+  // both press and release on the backdrop — a text-select drag must not discard the dialog
+  if (ev.target===modalBack && modalDownOnBack) closeModal();
+});
+window.addEventListener('keydown',ev=>{
+  if (ev.key==='Escape' && !modalBack.hidden){ closeModal(); ev.stopPropagation(); }
+}, true);
+
+// ---------- merge s2p -> sNp ----------
+function guessPorts(name){
+  // conservative: a port-pair right before the extension, never digits that are part
+  // of a longer number (dates/serials like _20260815.s2p must NOT match)
+  const m=/(?:^|[^0-9])p?([1-9])[_\-. ]?p?([1-9])\.s2p$/i.exec(name||'');
+  if (m && m[1]!==m[2]) return [ +m[1], +m[2] ];
+  return null;
+}
+function mergeAndAdd(rows, N, name){
+  const entries=[];
+  for (const r of rows){
+    const f=fileById(r.fid);
+    if (!f) return { ok:false, error:'missing file '+r.fid };
+    entries.push({ net:f.parsed, a:r.a, b:r.b, label:f.name });
+  }
+  const res=SNP.mergeSnp(entries, N);
+  if (!res.ok) return res;
+  // the output is re-imported through the parser, which reads the port count off the
+  // extension — a user-typed '.s2p' on a 3-port merge would silently reparse as garbage
+  let outName=name;
+  const em=/\.s(\d+)p$/i.exec(outName);
+  if (!em || parseInt(em[1],10)!==res.nPorts){
+    outName=outName.replace(/\.(s\d*p|snp|ts|txt)$/i,'');
+    outName=(outName||('merged_'+res.nPorts+'port'))+'.s'+res.nPorts+'p';
+    toast('output renamed to '+outName+' — an N-port file must carry N in its extension', false);
+  }
+  const comments=['Merged N-port assembled from pairwise 2-port measurements (idle ports terminated in Z0)'];
+  entries.forEach(e=>comments.push('  '+e.label+'  ->  network ports ('+e.a+','+e.b+')'));
+  let consLine=null;
+  if (res.consistency){
+    const c=res.consistency.worst;
+    consLine='merge consistency: worst redundant-measurement deviation |dS| = '
+      +c.maxDev.toExponential(2)+' on '+keyLabel(c.key)
+      +' @ '+SNP.fmtNum(c.atHz/1e9,5)+' GHz ('+c.n+' measurements)';
+    comments.push(consLine);
+  }
+  res.warnings.forEach(w=>comments.push(w));
+  const text=SNP.serializeTouchstone(res,{comments});
+  const p=loadText(outName, text);
+  if (p.ok){
+    const f=state.files[state.files.length-1];
+    if (f.parsed.nPorts!==res.nPorts || f.parsed.points!==res.points){
+      removeFile(f.id);
+      return { ok:false, error:'internal: reparse of the merged network disagreed with the merge ('
+        +f.parsed.nPorts+'-port/'+f.parsed.points+' pts vs '+res.nPorts+'-port/'+res.points+' pts)' };
+    }
+    res.warnings.forEach(w=>{ if (!p.warnings.includes(w)) p.warnings.push(w); });
+    if (consLine){
+      p.warnings.push(consLine);
+      toast('⚖ '+consLine, res.consistency.worst.maxDev>0.05);
+    }
+    renderFiles();
+  }
+  return { ok:p.ok, res, text, name:outName };
+}
+function openMergeDialog(){
+  const twoP=state.files.filter(f=>f.parsed.nPorts===2);
+  let h='<h3>Merge 2-port measurements → N-port network</h3>'
+    +'<p>Each file measured one <b>port pair</b> of the same DUT while every other port was '
+    +'terminated in a <b>matched load</b> (Z₀). Assign which network ports the file\'s port 1 and '
+    +'port 2 were connected to. <button class="btn ghost mini" id="mInfoBtn">ⓘ the math</button></p>';
+  if (!twoP.length){
+    h+='<p>No 2-port files loaded — import the pairwise .s2p measurements first.</p>'
+      +'<div class="modbtns"><button class="btn" id="mCancel">close</button></div>';
+    openModal(h);
+    $('mCancel').onclick=closeModal;
+    $('mInfoBtn').onclick=openInfoDialog;
+    return;
+  }
+  h+='<table class="mergetab"><tr><th>use</th><th>file</th><th>port 1 →</th><th>port 2 →</th></tr>';
+  for (const f of twoP){
+    const g=guessPorts(f.name)||[1,2];
+    h+='<tr><td><input type="checkbox" checked data-muse="'+f.id+'"></td>'
+      +'<td class="mname" title="'+esc(f.name)+'">'+esc(f.name)+'</td>'
+      +'<td><input type="number" min="1" max="16" value="'+g[0]+'" data-ma="'+f.id+'"></td>'
+      +'<td><input type="number" min="1" max="16" value="'+g[1]+'" data-mb="'+f.id+'"></td></tr>';
+  }
+  h+='</table>'
+    +'<div class="fieldgrid" style="margin-top:10px">'
+    +'<span class="lbl">ports (N)</span><input type="number" id="mN" min="2" max="16" value="2"><span></span><span></span>'
+    +'<span class="lbl">output name</span><input type="text" id="mName" style="grid-column:2/5"></div>'
+    +'<div id="mErr" class="moderr"></div>'
+    +'<div class="modbtns"><button class="btn" id="mCancel">cancel</button>'
+    +'<button class="btn primary" id="mGo">merge</button></div>';
+  openModal(h);
+  let nameDirty=false, nDirty=false;
+  const readRows=()=>{
+    const rows=[];
+    modalBox.querySelectorAll('[data-muse]').forEach(cb=>{
+      if (!cb.checked) return;
+      const fid=cb.dataset.muse;
+      rows.push({ fid,
+        a:parseInt(modalBox.querySelector('[data-ma="'+fid+'"]').value,10),
+        b:parseInt(modalBox.querySelector('[data-mb="'+fid+'"]').value,10) });
+    });
+    return rows;
+  };
+  const autoFill=()=>{
+    let N=2;
+    for (const r of readRows()){ if (Number.isFinite(r.a)) N=Math.max(N,r.a); if (Number.isFinite(r.b)) N=Math.max(N,r.b); }
+    if (!nDirty) $('mN').value=N;
+    if (!nameDirty) $('mName').value='merged_'+$('mN').value+'port.s'+$('mN').value+'p';
+  };
+  autoFill();
+  modalBox.querySelectorAll('[data-muse],[data-ma],[data-mb]').forEach(el=>el.addEventListener('input',autoFill));
+  $('mN').addEventListener('input',()=>{ nDirty=true; if (!nameDirty) $('mName').value='merged_'+$('mN').value+'port.s'+$('mN').value+'p'; });
+  $('mName').addEventListener('input',()=>{ nameDirty=true; });
+  $('mInfoBtn').onclick=openInfoDialog;
+  $('mCancel').onclick=closeModal;
+  $('mGo').onclick=()=>{
+    const rows=readRows();
+    if (!rows.length){ $('mErr').textContent='No measurements selected'; return; }
+    for (const r of rows){
+      if (!Number.isInteger(r.a)||!Number.isInteger(r.b)||r.a<1||r.b<1||r.a>16||r.b>16){
+        const f=fileById(r.fid);
+        $('mErr').textContent='Port numbers must be integers 1–16 ('+(f?f.name:r.fid)+')';
+        return;
+      }
+    }
+    const N=parseInt($('mN').value,10);
+    if (!Number.isInteger(N)||N<2||N>16){ $('mErr').textContent='Ports (N) must be 2–16'; return; }
+    const name=($('mName').value.trim()||('merged_'+N+'port.s'+N+'p'));
+    const r=mergeAndAdd(rows, N, name);
+    if (!r.ok){ $('mErr').textContent=r.error||'merge failed'; return; }
+    closeModal();
+  };
+}
+function openInfoDialog(){
+  openModal(
+    '<h3>The math: pairwise 2-port measurements → one N-port S-matrix</h3>'
+    +'<h4>1 · What S-parameters are</h4>'
+    +'<p>With every port referenced to the same impedance Z₀, the scattering matrix is defined by '
+    +'<b>b = S·a</b> (a = incident, b = outgoing normalized waves):</p>'
+    +'<pre>S<sub>ij</sub> = b<sub>i</sub> / a<sub>j</sub>   evaluated with a<sub>k</sub> = 0 for every k ≠ j</pre>'
+    +'<p>i.e. each column of S is defined <b>with all other ports not driven and not reflecting</b>.</p>'
+    +'<h4>2 · Why matched terminations are the whole trick</h4>'
+    +'<p>A load with reflection coefficient Γ<sub>k</sub> on port k imposes a<sub>k</sub> = Γ<sub>k</sub>·b<sub>k</sub>. '
+    +'A matched load (Γ<sub>k</sub> = 0) therefore enforces <b>exactly</b> the defining condition a<sub>k</sub> = 0. '
+    +'So when ports (i, j) are measured with a 2-port VNA while every other port is terminated in Z₀, '
+    +'the measured 2-port entries <b>are</b> the N-port entries, verbatim:</p>'
+    +'<pre>S11ᵐ = S<sub>ii</sub>    S21ᵐ = S<sub>ji</sub>    S12ᵐ = S<sub>ij</sub>    S22ᵐ = S<sub>jj</sub></pre>'
+    +'<p>No de-embedding, renormalization, or matrix inversion is involved. (This would <b>not</b> hold '
+    +'with open/shorted/mismatched idle ports — that case needs a full multiport correction.)</p>'
+    +'<h4>3 · Assembly and the consistency check</h4>'
+    +'<p>N(N−1)/2 pair measurements fill every off-diagonal entry once. Each reflection S<sub>ii</sub> is '
+    +'measured N−1 times (once per pair containing port i); this tool <b>averages</b> the redundant '
+    +'measurements and reports the worst deviation from the mean. That spread should sit at the '
+    +'instrument\'s repeatability level — a large value means drift, connector repeatability, or idle-port '
+    +'loads that are not actually matched.</p>'
+    +'<h4>4 · Unmeasured pairs</h4>'
+    +'<p>A pair you never measured leaves S<sub>ij</sub>/S<sub>ji</sub> unknown; they are written as exactly 0 '
+    +'(the matched-load assumption applied to the data itself) and flagged in the file\'s ⚠ warnings — '
+    +'never silently.</p>'
+    +'<h4>5 · Residual error from imperfect loads</h4>'
+    +'<p>If an idle port k actually reflects with Γ<sub>k</sub> ≠ 0, the leakage path in→k, reflect, k→out '
+    +'perturbs the measurement. To first order in Γ:</p>'
+    +'<pre>ΔS<sub>ij</sub> ≈ Σ<sub>k∉{i,j}</sub>  S<sub>ik</sub> · Γ<sub>k</sub> · S<sub>kj</sub></pre>'
+    +'<p>Small when the terminations are good (|Γ| &lt; −30 dB) or the coupling to port k is weak; '
+    +'this is also what the consistency spread of section 3 tends to expose.</p>'
+    +'<h4>6 · Data integrity rules</h4>'
+    +'<ul><li>All files must share one frequency grid (≤1 ppb tolerance) — this tool <b>never interpolates</b> measured data.</li>'
+    +'<li>All files must share one reference impedance — renormalization is deliberately out of scope.</li>'
+    +'<li>The merged network is written as Touchstone RI in Hz at full double precision, then re-imported '
+    +'through the same parser — so the plotted traces and the downloadable .sNp are <b>bit-identical</b>.</li></ul>'
+    +'<div class="modbtns"><button class="btn" id="iClose">close</button></div>'
+  );
+  $('iClose').onclick=closeModal;
+}
+$('mergeBtn').onclick=openMergeDialog;
+$('infoBtn').onclick=openInfoDialog;
+
+// ---------- demo data ----------
+function demoText(f0GHz, Rohm, fmt, unit){
+  // shunt series-RLC notch between two 50 Ω ports: Y=1/(R+j(wL-1/(wC)))
+  // S11 = -Y*Z0/(2+Y*Z0), S21 = 2/(2+Y*Z0)  (reciprocal, symmetric)
+  const Z0=50, L=2e-9, w0=2*Math.PI*f0GHz*1e9, C=1/(w0*w0*L);
+  const lines=['! S-Param Studio demo: shunt series-RLC notch, f0='+f0GHz+' GHz, R='+Rohm+' Ω',
+    '# '+unit+' S '+fmt+' R 50'];
+  const N=601, fA=1e9, fB=10e9;
+  const um=SNP.FREQ_MULT[unit.toLowerCase()];
+  for (let k=0;k<N;k++){
+    const fHz=fA+(fB-fA)*k/(N-1), w=2*Math.PI*fHz;
+    const X=w*L-1/(w*C);
+    const den=Rohm*Rohm+X*X;
+    const yre=Rohm/den, yim=-X/den;            // Y = 1/(R+jX)
+    const are=2+yre*Z0, aim=yim*Z0;            // A = 2+Y*Z0
+    const a2=are*are+aim*aim;
+    const s11=[-(yre*Z0*are+yim*Z0*aim)/a2, -(yim*Z0*are-yre*Z0*aim)/a2];
+    const s21=[2*are/a2, -2*aim/a2];
+    const pair=(c)=>{
+      if (fmt==='RI') return c[0].toPrecision(9)+' '+c[1].toPrecision(9);
+      const m=Math.hypot(c[0],c[1]), ang=Math.atan2(c[1],c[0])*180/Math.PI;
+      if (fmt==='MA') return m.toPrecision(9)+' '+ang.toPrecision(9);
+      return (20*Math.log10(m)).toPrecision(9)+' '+ang.toPrecision(9);
+    };
+    lines.push((fHz/um).toPrecision(10)+' '+pair(s11)+' '+pair(s21)+' '+pair(s21)+' '+pair(s11));
+  }
+  return lines.join('\n')+'\n';
+}
+$('demoBtn').onclick=()=>{
+  loadText('notch_R2_5GHz.s2p', demoText(5, 2, 'RI', 'GHz'));
+  loadText('notch_R8_5p6GHz.s2p', demoText(5.6, 8, 'DB', 'MHz'));
+};
+
+// ---------- render all ----------
+function renderAll(){
+  renderFiles();
+  renderMatrix();
+  renderPlot();
+}
+new ResizeObserver(()=>{ if (document.body.contains(svg)) renderPlot(); }).observe($('plotwrap'));
+renderAll();
+
+// test / automation hook — same code paths as the UI
+window.SNPApp={
+  SNP, state, loadText, removeFile, toggleSel, cycleSel, renderAll, renderPlot,
+  fileById, traces, traceY:(fid,key)=>{ const f=fileById(fid); return f?traceY(f,key):null; },
+  setFormat:(fm)=>{ $('formatSel').value=fm; $('formatSel').dispatchEvent(new Event('change')); },
+  setMode:(m)=>{ $('modeSel').value=m; $('modeSel').dispatchEvent(new Event('change')); },
+  setTheme:(t)=>{ $('themeSel').value=t; $('themeSel').dispatchEvent(new Event('change')); },
+  geom:()=>P, mergeAndAdd, openMergeDialog, openInfoDialog, guessPorts,
+  plotToPngBlob, plotToPdfBlob,
+};
+})();
+</script>
+<!--ART_BODY_END-->
+</body>
+</html>
