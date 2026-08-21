@@ -104,6 +104,7 @@
   .markerrow .rm:hover{ color:var(--danger); }
   .deltarow{ color:var(--ink2); font-size:12px; padding:3px 6px; border-left:2px solid var(--accent); margin-top:6px; }
   #plotwrap{ flex:1; position:relative; min-width:0; display:flex; flex-direction:column; }
+  #plotarea{ flex:1; min-height:0; min-width:0; overflow:auto; display:flex; }
   #plot{ flex:1; width:100%; height:100%; display:block; cursor:crosshair; }
   #hintbar{
     flex:0 0 auto; padding:4px 14px; color:var(--ink3); font-size:11px;
@@ -276,6 +277,12 @@
       <input type="text" id="yrminF" placeholder="auto" class="yrrow" style="display:none">
       <input type="text" id="yrmaxF" placeholder="auto" class="yrrow" style="display:none">
       <button class="btn ghost mini yrrow" id="yrAutoBtn" style="display:none">auto</button>
+      <span class="lbl" title="fixed figure size in px — drag the plot's corner grip, or type exact values">size (px)</span>
+      <input type="text" id="psW">
+      <input type="text" id="psH">
+      <button class="btn ghost mini" id="psAutoBtn" title="back to fill-the-window">auto</button>
+      <span></span>
+      <span class="lbl" id="psMm" style="grid-column:2/5"></span>
     </div>
     <div class="quickbtns">
       <button class="btn ghost" id="resetViewBtn">reset view</button>
@@ -288,6 +295,7 @@
 
   <div id="plotwrap">
     <div id="tabbar"></div>
+    <div id="plotarea">
     <svg id="plot" role="img" aria-label="S-parameter plot">
       <defs>
         <clipPath id="clip"><rect id="clipRect"/></clipPath>
@@ -303,7 +311,9 @@
       <!-- legend AFTER the overlay: a transparent fill is a painted hit target,
            so anything under it never receives clicks -->
       <g id="legendG"></g>
+      <g id="resizeG"></g>
     </svg>
+    </div>
     <div id="tooltip"></div>
     <div id="toasts"></div>
     <div id="hintbar">
@@ -774,6 +784,7 @@ function newTab(name, src){
     view: src?{...src.view}:{ xmin:null, xmax:null, ymin:null, ymax:null, yrmin:null, yrmax:null },
     smithView: src?{...src.smithView}:{ cx:0, cy:0, r:1.15 },
     legendPos: (src&&src.legendPos)? {...src.legendPos} : null,  // {fx,fy} fractions of the plot rect; null = auto top-right
+    plotSize: (src&&src.plotSize)? {...src.plotSize} : null,      // {w,h} px; null = fill the window
     markers: src? src.markers.map(m=>({...m})) : [],   // {id, fid, key, idx}
   };
 }
@@ -782,7 +793,7 @@ state.tabs=[newTab('Plot 1')];
 state.activeTabId=state.tabs[0].id;
 function curTab(){ return state.tabs.find(t=>t.id===state.activeTabId) || state.tabs[0]; }
 // per-tab fields stay reachable as state.<field>, so every consumer below is tab-aware for free
-for (const k of ['sel','axisR','format','plotMode','plotTheme','grid','legend','view','smithView','markers'])
+for (const k of ['sel','axisR','format','plotMode','plotTheme','grid','legend','view','smithView','markers','plotSize'])
   Object.defineProperty(state, k, { get:()=>curTab()[k], set:v=>{ curTab()[k]=v; } });
 let fileCounter=0, dashCounter=0, markerCounter=0;
 // light (white-background) variants keep the SAME hue per (i,j), stepped darker
@@ -1169,7 +1180,18 @@ function smithSamples(t){
   return { n:re.length, re, im, idxs };
 }
 
+function applyPlotSize(){
+  const ps=state.plotSize, area=$('plotarea');
+  if (ps){
+    area.style.display='block';                    // block + margin auto: centers, never clips when oversized
+    svg.style.flex='none'; svg.style.width=ps.w+'px'; svg.style.height=ps.h+'px'; svg.style.margin='0 auto';
+  } else {
+    area.style.display='flex';
+    svg.style.flex='1 1 auto'; svg.style.width=''; svg.style.height=''; svg.style.margin='';
+  }
+}
 function renderPlot(){
+  applyPlotSize();
   const r=svg.getBoundingClientRect();
   const W=Math.max(80, r.width), H=Math.max(60, r.height);
   const trs=traces();
@@ -1185,6 +1207,11 @@ function renderPlot(){
   else renderXY(W,H,trs,unit);
   renderPinnedMarkers();
   renderLegend();
+  // corner grip: drag to a fixed figure size (never exported)
+  $('resizeG').innerHTML= exportMode ? '' :
+    '<g style="cursor:nwse-resize"><rect x="'+(W-18)+'" y="'+(H-18)+'" width="18" height="18" fill="transparent"/>'
+    +'<path d="M'+(W-4)+' '+(H-13)+' L'+(W-13)+' '+(H-4)+' M'+(W-4)+' '+(H-8)+' L'+(W-8)+' '+(H-4)
+    +'" stroke="var(--ink3)" stroke-width="1.5" fill="none"/></g>';
   hoverFocus=null;                       // geometry changed — a stale focus must not pin ghosts
   $('hoverG').innerHTML='';
   $('tooltip').style.display='none';
@@ -1699,6 +1726,15 @@ function syncRangeFields(){
   $('ymaxF').value = state.view.ymax==null?'':SNP.fmtNum(state.view.ymax,6);
   $('yrminF').value = state.view.yrmin==null?'':SNP.fmtNum(state.view.yrmin,6);
   $('yrmaxF').value = state.view.yrmax==null?'':SNP.fmtNum(state.view.yrmax,6);
+  const ps=state.plotSize, rct=svg.getBoundingClientRect();
+  $('psW').value= ps? ps.w : '';
+  $('psH').value= ps? ps.h : '';
+  $('psW').placeholder=String(Math.round(rct.width)||'auto');
+  $('psH').placeholder=String(Math.round(rct.height)||'auto');
+  const fw=ps?ps.w:Math.round(rct.width), fh=ps?ps.h:Math.round(rct.height);
+  $('psMm').textContent= (fw&&fh)
+    ? '= '+(fw/96*25.4).toFixed(1)+' × '+(fh/96*25.4).toFixed(1)+' mm physical (PDF & 900-dpi PNG)'
+    : '';
 }
 function normalizeView(){
   // honor both typed values; correct only their order, so the fields and the axis agree
@@ -1731,6 +1767,43 @@ $('resetViewBtn').onclick=()=>{
   state.smithView={ cx:0, cy:0, r:1.15 };
   renderPlot();
 };
+const PS_MIN_W=280, PS_MIN_H=200, PS_MAX=4000;
+function commitPlotSize(){
+  const wT=$('psW').value.trim(), hT=$('psH').value.trim();
+  if (wT==='' && hT===''){ state.plotSize=null; }
+  else {
+    const r=svg.getBoundingClientRect();
+    const w=parseInt(wT,10), h=parseInt(hT,10);
+    state.plotSize={
+      w: Math.max(PS_MIN_W, Math.min(PS_MAX, Number.isFinite(w)? w : Math.round(r.width))),
+      h: Math.max(PS_MIN_H, Math.min(PS_MAX, Number.isFinite(h)? h : Math.round(r.height))),
+    };
+  }
+  renderPlot(); scheduleAutosave();
+}
+$('psW').addEventListener('change',commitPlotSize);
+$('psH').addEventListener('change',commitPlotSize);
+$('psAutoBtn').onclick=()=>{ state.plotSize=null; renderPlot(); scheduleAutosave(); };
+$('resizeG').addEventListener('mousedown',ev=>{
+  if (ev.button!==0) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const r=svg.getBoundingClientRect();
+  const start={ x:ev.clientX, y:ev.clientY, w:r.width, h:r.height };
+  const move=e=>{
+    state.plotSize={
+      w: Math.round(Math.max(PS_MIN_W, Math.min(PS_MAX, start.w + e.clientX-start.x))),
+      h: Math.round(Math.max(PS_MIN_H, Math.min(PS_MAX, start.h + e.clientY-start.y))),
+    };
+    renderPlot();
+  };
+  const up=()=>{
+    window.removeEventListener('mousemove',move);
+    window.removeEventListener('mouseup',up);
+    scheduleAutosave();
+  };
+  window.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',up);
+});
 
 // ---------- header controls ----------
 $('formatSel').addEventListener('change',()=>{
@@ -1801,7 +1874,7 @@ function bakeSvgClone(){
       d.removeAttribute('class');
     }
   }
-  for (const id of ['overlay','bandRect','hoverG'])
+  for (const id of ['overlay','bandRect','hoverG','resizeG'])
     { const e=clone.querySelector('#'+id); if (e) e.remove(); }
   return { clone, w:rect.width, h:rect.height };
 }
@@ -1962,7 +2035,7 @@ function plotToPdfInner(){
       const tag=child.tagName.toLowerCase();
       if (tag==='defs') continue;
       const id=child.id||'';
-      if (id==='overlay'||id==='bandRect'||id==='hoverG') continue;
+      if (id==='overlay'||id==='bandRect'||id==='hoverG'||id==='resizeG') continue;
       const cs=getComputedStyle(child);
       if (cs.display==='none'||cs.visibility==='hidden') continue;
       if (tag==='g'){
@@ -2369,6 +2442,7 @@ function buildProject(){
       format:t.format, plotMode:t.plotMode, plotTheme:t.plotTheme,
       grid:t.grid, legend:t.legend, view:{...t.view}, smithView:{...t.smithView},
       legendPos: t.legendPos?{...t.legendPos}:null,
+      plotSize: t.plotSize?{...t.plotSize}:null,
       markers:t.markers.map(m=>({ fileIndex:fidToIdx.get(m.fid), key:m.key, idx:m.idx }))
         .filter(m=>m.fileIndex!=null),
     })),
@@ -2427,6 +2501,9 @@ function loadProjectText(text, opts){
     t.smithView={ cx:isFinite(sv.cx)?sv.cx:0, cy:isFinite(sv.cy)?sv.cy:0, r:(isFinite(sv.r)&&sv.r>0)?sv.r:1.15 };
     const lp=pt.legendPos;
     t.legendPos=(lp && isFinite(lp.fx) && isFinite(lp.fy))? { fx:+lp.fx, fy:+lp.fy } : null;
+    const z=pt.plotSize;
+    t.plotSize=(z && isFinite(z.w) && isFinite(z.h))
+      ? { w:Math.max(280,Math.min(4000,Math.round(z.w))), h:Math.max(200,Math.min(4000,Math.round(z.h))) } : null;
     t.markers=(Array.isArray(pt.markers)?pt.markers:[]).map(m=>{
       const f=newFiles[m.fileIndex];
       return (f && f.parsed.S[m.key] && Number.isInteger(m.idx) && m.idx>=0 && m.idx<f.parsed.points)
