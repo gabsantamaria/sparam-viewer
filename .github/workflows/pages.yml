@@ -33,9 +33,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # the Pages site is created once in Settings -> Pages (Source: GitHub Actions);
+      # self-enablement needs repo-admin, which the workflow token never has
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true    # creates the Pages site on first run — no Settings visit needed
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
