@@ -311,6 +311,7 @@
       <span><b>click</b> = pin marker</span>
       <span><b>drag</b> = zoom</span>
       <span><b>double-click</b> = reset zoom</span>
+      <span><b>legend</b>: drag moves · click entry hides · double-click resets · ○ start ● end on Smith</span>
       <span style="margin-left:auto"><b>color = S-parameter · line style = file · matrix cell cycles – / L / R axis</b></span>
     </div>
   </div>
@@ -1346,13 +1347,9 @@ function renderLegend(){
   const entries=P.trs.map(t=>({ t,
     label:keyLabel(t.key)+' · '+truncLabel(t.f,16)+(P.mode==='xy'&&t.axis==='R'?'  →R':'') }));
   const lineH=17, pad=9, sample=26;
-  const note= exportMode ? null : (P.mode==='smith'
-    ? 'color = S-param · dash = file · ○ start ● end · drag moves'
-    : 'color = S-param · dash = file · click hides · drag moves');
-  const wMax=Math.max(Math.max(...entries.map(e=>e.label.length))*6.6 + sample + 30,
-    note? note.length*5.3 + 18 : 0);
+  const wMax=Math.max(...entries.map(e=>e.label.length))*6.6 + sample + 30;
   const w=Math.min(wMax, 340);
-  const h=entries.length*lineH + pad*2 + (note?13:0);
+  const h=entries.length*lineH + pad*2;
   let x, y;
   const lp=curTab().legendPos;
   if (lp && isFinite(lp.fx) && isFinite(lp.fy)){ x=P.l+lp.fx*P.w; y=P.t+lp.fy*P.h; }
@@ -1369,7 +1366,6 @@ function renderLegend(){
       +(e.t.dash?' stroke-dasharray="'+e.t.dash+'"':'')+'/>'
       +'<text class="legendtext" x="'+(x+9+sample+7)+'" y="'+(yy+3.5)+'">'+esc(e.label)+'</text></g>';
   });
-  if (note) s+='<text class="legendnote" x="'+(x+9)+'" y="'+(y+h-6)+'">'+note+'</text>';
   s+='</g>';
   g.innerHTML=s;
   g.querySelectorAll('[data-leg]').forEach(el=>{
