@@ -772,6 +772,7 @@ function newTab(name, src){
     legend: src?src.legend:true,
     view: src?{...src.view}:{ xmin:null, xmax:null, ymin:null, ymax:null, yrmin:null, yrmax:null },
     smithView: src?{...src.smithView}:{ cx:0, cy:0, r:1.15 },
+    legendPos: (src&&src.legendPos)? {...src.legendPos} : null,  // {fx,fy} fractions of the plot rect; null = auto top-right
     markers: src? src.markers.map(m=>({...m})) : [],   // {id, fid, key, idx}
   };
 }
@@ -1344,14 +1345,19 @@ function renderLegend(){
     label:keyLabel(t.key)+' · '+truncLabel(t.f,16)+(P.mode==='xy'&&t.axis==='R'?'  →R':'') }));
   const lineH=17, pad=9, sample=26;
   const note= P.mode==='smith'
-    ? 'color = S-param · dash = file · ○ start ● end'
-    : 'color = S-param · dash = file · click hides';
+    ? 'color = S-param · dash = file · ○ start ● end · drag moves'
+    : 'color = S-param · dash = file · click hides · drag moves';
   const wMax=Math.max(Math.max(...entries.map(e=>e.label.length))*6.6 + sample + 30, note.length*5.3 + 18);
-  const w=Math.min(wMax, 320);
+  const w=Math.min(wMax, 340);
   const h=entries.length*lineH + pad*2 + 13;
-  const x=P.l+P.w-w-10, y=P.t+10;
+  let x, y;
+  const lp=curTab().legendPos;
+  if (lp && isFinite(lp.fx) && isFinite(lp.fy)){ x=P.l+lp.fx*P.w; y=P.t+lp.fy*P.h; }
+  else { x=P.l+P.w-w-10; y=P.t+10; }
+  x=Math.max(P.l+2, Math.min(x, P.l+P.w-w-2));
+  y=Math.max(P.t+2, Math.min(y, P.t+P.h-h-2));
   let s='<g style="cursor:pointer">'
-    +'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="7" fill="'+chrome().panel+'" stroke="'+chrome().panelStroke+'"/>';
+    +'<rect data-legbg="1" style="cursor:grab" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="7" fill="'+chrome().panel+'" stroke="'+chrome().panelStroke+'"/>';
   entries.forEach((e,i)=>{
     const yy=y+pad+i*lineH+9;
     s+='<g data-leg="'+e.t.f.id+'|'+e.t.key+'">'
@@ -1364,11 +1370,50 @@ function renderLegend(){
   g.innerHTML=s;
   g.querySelectorAll('[data-leg]').forEach(el=>{
     el.addEventListener('click',()=>{
+      if (legendDragged) return;      // a drag that started on an entry is not a hide
       const [fid,key]=splitSel(el.dataset.leg);
       toggleSel(fid,key,false);
     });
   });
 }
+// drag the legend anywhere in the plot; position is per-tab and persists
+let legendDrag=null, legendDragged=false;
+function wireLegendDrag(){
+  const g=$('legendG');
+  g.addEventListener('mousedown',ev=>{
+    if (ev.button!==0 || !P || !state.legend) return;
+    const bg=g.querySelector('[data-legbg]');
+    if (!bg) return;
+    ev.preventDefault();
+    legendDrag={ sx:ev.clientX, sy:ev.clientY, x0:+bg.getAttribute('x'), y0:+bg.getAttribute('y'), moved:false };
+    const move=e=>{
+      if (!legendDrag) return;
+      const dx=e.clientX-legendDrag.sx, dy=e.clientY-legendDrag.sy;
+      if (!legendDrag.moved && Math.hypot(dx,dy)<=4) return;   // click slop: a click is not a move
+      legendDrag.moved=true; legendDragged=true;
+      const cl=(v)=>Math.max(0, Math.min(0.98, v));   // keep stored fractions sane; render re-clamps exactly
+      curTab().legendPos={ fx:cl((legendDrag.x0+dx-P.l)/P.w), fy:cl((legendDrag.y0+dy-P.t)/P.h) };
+      renderLegend();
+    };
+    const up=()=>{
+      window.removeEventListener('mousemove',move);
+      window.removeEventListener('mouseup',up);
+      const didMove=legendDrag && legendDrag.moved;
+      legendDrag=null;
+      if (didMove){ scheduleAutosave(); setTimeout(()=>{ legendDragged=false; },0); }
+      else legendDragged=false;
+    };
+    window.addEventListener('mousemove',move);
+    window.addEventListener('mouseup',up);
+  });
+  g.addEventListener('dblclick',ev=>{
+    if (ev.target.closest('[data-leg]')) return;    // entries keep their own click semantics
+    ev.stopPropagation();                           // must not reach the overlay's reset-zoom
+    curTab().legendPos=null;
+    renderLegend(); scheduleAutosave();
+  });
+}
+wireLegendDrag();
 
 function markerText(m){
   const f=fileById(m.fid);
@@ -2315,6 +2360,7 @@ function buildProject(){
       name:t.name, sel:mapSet(t.sel), axisR:mapSet(t.axisR),
       format:t.format, plotMode:t.plotMode, plotTheme:t.plotTheme,
       grid:t.grid, legend:t.legend, view:{...t.view}, smithView:{...t.smithView},
+      legendPos: t.legendPos?{...t.legendPos}:null,
       markers:t.markers.map(m=>({ fileIndex:fidToIdx.get(m.fid), key:m.key, idx:m.idx }))
         .filter(m=>m.fileIndex!=null),
     })),
@@ -2371,6 +2417,8 @@ function loadProjectText(text, opts){
     t.view={ xmin:fin(v.xmin), xmax:fin(v.xmax), ymin:fin(v.ymin), ymax:fin(v.ymax), yrmin:fin(v.yrmin), yrmax:fin(v.yrmax) };
     const sv=pt.smithView||{};
     t.smithView={ cx:isFinite(sv.cx)?sv.cx:0, cy:isFinite(sv.cy)?sv.cy:0, r:(isFinite(sv.r)&&sv.r>0)?sv.r:1.15 };
+    const lp=pt.legendPos;
+    t.legendPos=(lp && isFinite(lp.fx) && isFinite(lp.fy))? { fx:+lp.fx, fy:+lp.fy } : null;
     t.markers=(Array.isArray(pt.markers)?pt.markers:[]).map(m=>{
       const f=newFiles[m.fileIndex];
       return (f && f.parsed.S[m.key] && Number.isInteger(m.idx) && m.idx>=0 && m.idx<f.parsed.points)
