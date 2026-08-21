@@ -182,7 +182,9 @@
     display:flex; align-items:center; gap:6px; padding:3px 10px;
     border:1px solid var(--line); border-bottom:none; border-radius:7px 7px 0 0;
     background:var(--panel2); color:var(--ink2); cursor:pointer; font-size:12px; white-space:nowrap;
+    user-select:none;
   }
+  #tabbar .tclose[data-tdup]:hover{ color:var(--accent); }
   #tabbar .tab.act{ background:var(--panel); color:var(--ink); border-color:#2c4266; }
   #tabbar .tclose{ background:none; border:none; color:var(--ink3); cursor:pointer; font:inherit; padding:0 1px; }
   #tabbar .tclose:hover{ color:var(--danger); }
@@ -1705,7 +1707,9 @@ $('fileInput').addEventListener('change',async ev=>{
 });
 ['dragover','dragenter'].forEach(t=>document.addEventListener(t,ev=>{
   ev.preventDefault();
-  $('dropzone').classList.add('drag');
+  // only real FILE drags light the dropzone — a tab reorder drag must not
+  if (ev.dataTransfer && [...ev.dataTransfer.types].includes('Files'))
+    $('dropzone').classList.add('drag');
 }));
 ['dragleave','drop'].forEach(t=>document.addEventListener(t,ev=>{
   if (t==='drop') ev.preventDefault();
@@ -2203,7 +2207,7 @@ $('demoBtn').onclick=()=>{
 };
 
 // ---------- plot tabs ----------
-let editingTab=null;
+let editingTab=null, dragTabId=null;
 function syncHeaderControls(){
   $('formatSel').value=state.format;
   $('modeSel').value=state.plotMode;
@@ -2219,6 +2223,14 @@ function switchTab(id){
 function addTab(){
   const t=newTab(null, curTab());          // clone the current tab's whole plot setup
   state.tabs.push(t);
+  switchTab(t.id);
+}
+function dupTab(id){
+  const i=state.tabs.findIndex(t=>t.id===id);
+  if (i<0) return;
+  const src=state.tabs[i];
+  const t=newTab(src.name+' copy', src);
+  state.tabs.splice(i+1, 0, t);     // land right next to its source
   switchTab(t.id);
 }
 function closeTab(id){
@@ -2243,15 +2255,36 @@ function renderTabs(){
     const nameHtml = editingTab===t.id
       ? '<input class="tabedit" data-ted="'+t.id+'" value="'+esc(t.name)+'" spellcheck="false">'
       : '<span data-tname="'+t.id+'" title="double-click to rename">'+esc(t.name)+'</span>';
-    return '<div class="tab'+(t.id===state.activeTabId?' act':'')+'" data-tab="'+t.id+'">'+nameHtml
+    return '<div class="tab'+(t.id===state.activeTabId?' act':'')+'" data-tab="'+t.id+'"'
+      +(editingTab===t.id?'':' draggable="true"')+'>'+nameHtml
+      +'<button class="tclose" data-tdup="'+t.id+'" title="duplicate this tab">⧉</button>'
       +(state.tabs.length>1?'<button class="tclose" data-tclose="'+t.id+'" title="close tab">×</button>':'')
       +'</div>';
   }).join('')+'<button class="taddbtn" id="tabAdd" title="new plot tab (clones the current tab\'s setup — same files, independent plot)">+ tab</button>';
   el.querySelectorAll('[data-tab]').forEach(d=>d.onclick=(ev)=>{
-    if (ev.target.closest('[data-tclose]')||ev.target.closest('.tabedit')) return;
+    if (ev.target.closest('[data-tclose]')||ev.target.closest('[data-tdup]')||ev.target.closest('.tabedit')) return;
     switchTab(d.dataset.tab);
   });
   el.querySelectorAll('[data-tname]').forEach(sp=>sp.ondblclick=()=>{ editingTab=sp.dataset.tname; renderTabs(); });
+  // drag a tab onto another to reorder (left half = before it, right half = after)
+  el.querySelectorAll('[data-tab]').forEach(d=>{
+    d.addEventListener('dragstart',ev=>{ dragTabId=d.dataset.tab; ev.dataTransfer.effectAllowed='move'; });
+    d.addEventListener('dragover',ev=>{ ev.preventDefault(); ev.dataTransfer.dropEffect='move'; });
+    d.addEventListener('dragend',()=>{ dragTabId=null; });
+    d.addEventListener('drop',ev=>{
+      ev.preventDefault(); ev.stopPropagation();   // must not reach the document file-drop handler
+      if (!dragTabId || dragTabId===d.dataset.tab) return;
+      const from=state.tabs.findIndex(t=>t.id===dragTabId);
+      if (from<0) return;
+      const [moved]=state.tabs.splice(from,1);
+      const r=d.getBoundingClientRect();
+      const at=state.tabs.findIndex(t=>t.id===d.dataset.tab);
+      state.tabs.splice(at + (ev.clientX > r.x+r.width/2 ? 1 : 0), 0, moved);
+      dragTabId=null;
+      renderTabs();
+    });
+  });
+  el.querySelectorAll('[data-tdup]').forEach(b=>b.onclick=(ev)=>{ ev.stopPropagation(); dupTab(b.dataset.tdup); });
   el.querySelectorAll('[data-tclose]').forEach(b=>b.onclick=(ev)=>{ ev.stopPropagation(); closeTab(b.dataset.tclose); });
   const add=$('tabAdd'); if (add) add.onclick=addTab;
   const inp=el.querySelector('.tabedit');
@@ -2401,7 +2434,7 @@ window.SNPApp={
   geom:()=>P, mergeAndAdd, openMergeDialog, openInfoDialog, guessPorts,
   plotToPngBlob, plotToPdfBlob,
   cycleDash, setFileLabel:(fid,label)=>{ const f=fileById(fid); if (f){ f.label=label||null; renderAll(); } },
-  addTab, switchTab, closeTab, curTab, buildProject, saveProject, loadProjectText, setSidebarWidth,
+  addTab, switchTab, closeTab, dupTab, curTab, buildProject, saveProject, loadProjectText, setSidebarWidth,
 };
 })();
 </script>
