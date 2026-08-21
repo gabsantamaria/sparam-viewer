@@ -44,9 +44,11 @@
   label.inline{ display:flex; align-items:center; gap:6px; color:var(--ink2); white-space:nowrap; }
   main{ flex:1; display:flex; min-height:0; }
   aside{
-    width:330px; flex:0 0 330px; background:var(--panel); border-right:1px solid var(--line);
-    overflow-y:auto; padding:10px 12px 24px;
+    width:330px; flex:0 0 auto; background:var(--panel); border-right:1px solid var(--line);
+    overflow-y:auto; padding:10px 12px 24px; min-width:0;
   }
+  #splitbar{ flex:0 0 5px; cursor:col-resize; background:var(--line2); }
+  #splitbar:hover, #splitbar.on{ background:#3b82f6; }
   aside h2{
     font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--ink3);
     margin:16px 0 6px; font-weight:700; display:flex; align-items:center; gap:8px;
@@ -165,6 +167,30 @@
   #plotwrap[data-ptheme="light"] svg .axislabel{ fill:#1f2937; }
   #plotwrap[data-ptheme="light"] svg .legendtext{ fill:#0f172a; }
   #plotwrap[data-ptheme="light"] svg .legendnote{ fill:#64748b; }
+  .labeledit,.tabedit{
+    font:inherit; font-size:12px; background:var(--panel); border:1px solid var(--accent);
+    border-radius:4px; padding:1px 5px; color:var(--ink); width:100%; min-width:0;
+  }
+  .tabedit{ width:9em; }
+  .stylebtn{ background:none; border:none; padding:2px; cursor:pointer; border-radius:4px; flex:0 0 auto; }
+  .stylebtn:hover{ background:#1b2a44; }
+  #tabbar{
+    flex:0 0 auto; display:flex; gap:4px; align-items:center;
+    padding:6px 10px 0; overflow-x:auto;
+  }
+  #tabbar .tab{
+    display:flex; align-items:center; gap:6px; padding:3px 10px;
+    border:1px solid var(--line); border-bottom:none; border-radius:7px 7px 0 0;
+    background:var(--panel2); color:var(--ink2); cursor:pointer; font-size:12px; white-space:nowrap;
+  }
+  #tabbar .tab.act{ background:var(--panel); color:var(--ink); border-color:#2c4266; }
+  #tabbar .tclose{ background:none; border:none; color:var(--ink3); cursor:pointer; font:inherit; padding:0 1px; }
+  #tabbar .tclose:hover{ color:var(--danger); }
+  #tabbar .taddbtn{
+    background:none; border:1px dashed var(--line); color:var(--ink3);
+    border-radius:6px; cursor:pointer; padding:2px 9px; font:inherit;
+  }
+  #tabbar .taddbtn:hover{ color:var(--ink); border-color:#2c4266; }
   svg text{ font:11px "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace; fill:var(--ink2); }
   svg .axislabel{ font-size:12px; fill:var(--ink2); }
   svg .legendtext{ font-size:11.5px; fill:var(--ink); }
@@ -211,13 +237,17 @@
   <label class="inline"><input type="checkbox" id="legendChk" checked> legend</label>
 </header>
 <main>
-  <aside>
+  <aside id="side">
     <h2>Files <span class="rule"></span></h2>
     <div id="dropzone">drop .s1p / .s2p / … .sNp here<br>(or click to browse)</div>
     <div id="fileList"></div>
     <div class="quickbtns">
       <button class="btn ghost" id="mergeBtn" title="assemble an N-port network from pairwise 2-port measurements">merge s2p → sNp</button>
       <button class="btn ghost" id="infoBtn" title="the math behind the merge">ⓘ math</button>
+    </div>
+    <div class="quickbtns">
+      <button class="btn ghost" id="projSaveBtn" title="save everything — files, labels, styles, tabs — as one .json project">save project</button>
+      <button class="btn ghost" id="projOpenBtn" title="open a saved .json project (replaces the current session)">open project</button>
     </div>
 
     <h2>Traces <span class="rule"></span></h2>
@@ -251,8 +281,10 @@
     <h2>Markers <span class="rule"></span></h2>
     <div id="markerList"><div class="empty">Click on a trace to pin a marker.</div></div>
   </aside>
+  <div id="splitbar" title="drag to resize the panel"></div>
 
   <div id="plotwrap">
+    <div id="tabbar"></div>
     <svg id="plot" role="img" aria-label="S-parameter plot">
       <defs>
         <clipPath id="clip"><rect id="clipRect"/></clipPath>
@@ -283,6 +315,7 @@
 <div id="modalBack" class="modalback" hidden><div class="modal" id="modalBox"></div></div>
 <input type="file" id="fileInput" multiple hidden
   accept=".s1p,.s2p,.s3p,.s4p,.s5p,.s6p,.s7p,.s8p,.snp,.ts,.txt">
+<input type="file" id="projInput" hidden accept=".json,application/json">
 
 <script>
 //<<PURE_START>>
@@ -721,18 +754,31 @@ const FILE_DASHES=[
 ];
 const FORMAT_LABELS={ db:'|S| (dB)', mag:'|S| (linear)', deg:'Phase (°)', degU:'Phase, unwrapped (°)', re:'Re(S)', im:'Im(S)' };
 
-const state={
-  files:[],                       // {id, name, parsed, text, dashIdx}
-  sel:new Set(),                  // "fid|i,j"
-  axisR:new Set(),                // subset of sel plotted on the RIGHT y axis (XY mode)
-  format:'db',
-  plotMode:'xy',                  // 'xy' | 'smith'
-  plotTheme:'dark',               // 'dark' | 'light' (white publication figure)
-  grid:true, legend:true,
-  view:{ xmin:null, xmax:null, ymin:null, ymax:null, yrmin:null, yrmax:null },
-  smithView:{ cx:0, cy:0, r:1.15 },   // square window in the Gamma plane
-  markers:[],                     // {id, fid, key, idx}
-};
+// files are SHARED; everything about how they are plotted lives on a TAB
+let tabCounter=0;
+function newTab(name, src){
+  return {
+    id:'t'+(++tabCounter),
+    name: name || ('Plot '+(state.tabs.length+1)),
+    sel:   new Set(src?[...src.sel]:[]),      // "fid|i,j"
+    axisR: new Set(src?[...src.axisR]:[]),    // subset of sel on the RIGHT y axis
+    format: src?src.format:'db',
+    plotMode: src?src.plotMode:'xy',          // 'xy' | 'smith'
+    plotTheme: src?src.plotTheme:'dark',      // 'dark' | 'light' (white publication figure)
+    grid: src?src.grid:true,
+    legend: src?src.legend:true,
+    view: src?{...src.view}:{ xmin:null, xmax:null, ymin:null, ymax:null, yrmin:null, yrmax:null },
+    smithView: src?{...src.smithView}:{ cx:0, cy:0, r:1.15 },
+    markers: src? src.markers.map(m=>({...m})) : [],   // {id, fid, key, idx}
+  };
+}
+const state={ files:[], tabs:[], activeTabId:null };  // files: {id,name,parsed,text,label,dashIdx}
+state.tabs=[newTab('Plot 1')];
+state.activeTabId=state.tabs[0].id;
+function curTab(){ return state.tabs.find(t=>t.id===state.activeTabId) || state.tabs[0]; }
+// per-tab fields stay reachable as state.<field>, so every consumer below is tab-aware for free
+for (const k of ['sel','axisR','format','plotMode','plotTheme','grid','legend','view','smithView','markers'])
+  Object.defineProperty(state, k, { get:()=>curTab()[k], set:v=>{ curTab()[k]=v; } });
 let fileCounter=0, dashCounter=0, markerCounter=0;
 // light (white-background) variants keep the SAME hue per (i,j), stepped darker
 const SPARAM_COLORS_LIGHT={ '1,1':'#dc2626', '2,1':'#2563eb', '1,2':'#15803d', '2,2':'#b45309' };
@@ -817,9 +863,12 @@ function defaultSelect(f){
 }
 function removeFile(fid){
   state.files=state.files.filter(f=>f.id!==fid);
-  state.sel=new Set([...state.sel].filter(s=>!s.startsWith(fid+'|')));
-  state.axisR=new Set([...state.axisR].filter(s=>!s.startsWith(fid+'|')));
-  state.markers=state.markers.filter(m=>m.fid!==fid);
+  // a removed file must vanish from EVERY tab, not just the active one
+  for (const t of state.tabs){
+    t.sel=new Set([...t.sel].filter(s=>!s.startsWith(fid+'|')));
+    t.axisR=new Set([...t.axisR].filter(s=>!s.startsWith(fid+'|')));
+    t.markers=t.markers.filter(m=>m.fid!==fid);
+  }
   derivedCache.clear();
   if (!state.files.length) dashCounter=0;
   renderAll();
@@ -891,6 +940,23 @@ function styleSampleSVG(dash, color){
     +'<line x1="1" y1="6" x2="33" y2="6" stroke="'+(color||'#cbd5e1')+'" stroke-width="2"'
     +(dash?' stroke-dasharray="'+dash+'"':'')+'/></svg>';
 }
+let editingLabel=null;          // fid whose display name is being edited
+function startLabelEdit(fid){ editingLabel=fid; renderFiles(); }
+function commitLabelEdit(fid, value){
+  if (editingLabel!==fid) return;         // blur after Enter-commit must not double-fire
+  editingLabel=null;
+  const f=fileById(fid);
+  if (f){
+    const v=String(value).trim();
+    f.label = (v && v!==f.name) ? v : null;   // empty (or the filename itself) = back to default
+  }
+  renderAll();                            // label reaches legend/tooltip/matrix/markers
+}
+function cycleDash(fid){
+  const f=fileById(fid); if (!f) return;
+  f.dashIdx=(f.dashIdx+1)%FILE_DASHES.length;
+  renderAll();
+}
 function renderFiles(){
   const el=$('fileList');
   if (!state.files.length){ el.innerHTML='<div class="empty">No files loaded yet.</div>'; return; }
@@ -899,16 +965,26 @@ function renderFiles(){
     const f0=SNP.fmtNum(p.freqHz[0]/u.mult,4), f1=SNP.fmtNum(p.freqHz[p.freqHz.length-1]/u.mult,4);
     const warn=p.warnings.length
       ? '<span class="warn" title="'+esc(p.warnings.join('\n'))+'">⚠</span>' : '';
-    return '<div class="filerow">'+styleSampleSVG(FILE_DASHES[f.dashIdx].dash)
-      +'<div class="fmeta"><div class="fname" title="'+esc(f.name)+'">'+esc(f.name)+'</div>'
+    const nameCell = editingLabel===f.id
+      ? '<input class="labeledit" data-led="'+f.id+'" value="'+esc(f.label!=null?f.label:f.name)+'" spellcheck="false">'
+      : '<div class="fname" data-lbl="'+f.id+'" title="file: '+esc(f.name)+' — double-click to rename the legend label">'
+        +esc(f.label!=null?f.label:f.name)+'</div>';
+    return '<div class="filerow">'
+      +'<button class="stylebtn" data-dash="'+f.id+'" title="line style: '+FILE_DASHES[f.dashIdx].label
+      +' — click to cycle">'+styleSampleSVG(FILE_DASHES[f.dashIdx].dash)+'</button>'
+      +'<div class="fmeta">'+nameCell
       +'<div class="fsub">'+p.nPorts+'-port · '+p.points+' pts · '+f0+'–'+f1+' '+u.name
       +' · '+p.z0+' Ω · '+FILE_DASHES[f.dashIdx].label+'</div></div>'
       +warn
+      +'<button class="rm" title="rename legend label" data-ed="'+f.id+'">✎</button>'
       +'<button class="rm" title="download Touchstone file" data-dl="'+f.id+'">⬇</button>'
       +'<button class="rm" title="copy Touchstone text to clipboard" data-cp="'+f.id+'">⧉</button>'
       +'<button class="rm" title="remove file" data-rm="'+f.id+'">✕</button></div>';
   }).join('');
   el.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>removeFile(b.dataset.rm));
+  el.querySelectorAll('[data-dash]').forEach(b=>b.onclick=()=>cycleDash(b.dataset.dash));
+  el.querySelectorAll('[data-ed]').forEach(b=>b.onclick=()=>startLabelEdit(b.dataset.ed));
+  el.querySelectorAll('[data-lbl]').forEach(d=>d.ondblclick=()=>startLabelEdit(d.dataset.lbl));
   el.querySelectorAll('[data-dl]').forEach(b=>b.onclick=()=>{
     const f=fileById(b.dataset.dl); if (f) saveTextFile(f.name, f.text);
   });
@@ -918,6 +994,15 @@ function renderFiles(){
       ()=>toast('⧉ '+f.name+' copied to clipboard', false),
       ()=>toast('✗ clipboard blocked — use the ⬇ download instead', false));
   });
+  const inp=el.querySelector('.labeledit');
+  if (inp){
+    inp.focus(); inp.select();
+    inp.addEventListener('keydown',ev=>{
+      if (ev.key==='Enter') commitLabelEdit(inp.dataset.led, inp.value);
+      else if (ev.key==='Escape'){ editingLabel=null; renderFiles(); ev.stopPropagation(); }
+    });
+    inp.addEventListener('blur',()=>commitLabelEdit(inp.dataset.led, inp.value));
+  }
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
@@ -938,7 +1023,7 @@ function renderMatrix(){
   let h='<table class="matrix"><tr><th class="corner">trace \\ file</th>';
   state.files.forEach((f,fi)=>{
     h+='<th data-col="'+f.id+'" title="'+esc(f.name)+' — click to toggle column">'
-      +styleSampleSVG(FILE_DASHES[f.dashIdx].dash)+'<br>'+esc(shortName(f.name,10))+'</th>';
+      +styleSampleSVG(FILE_DASHES[f.dashIdx].dash)+'<br>'+esc(truncLabel(f,10))+'</th>';
   });
   h+='</tr>';
   for (const k of keys){
@@ -985,9 +1070,12 @@ function renderMatrix(){
   });
 }
 function splitSel(s){ const i=s.indexOf('|'); return [s.slice(0,i), s.slice(i+1)]; }
-function shortName(n,max){
-  const base=n.replace(/\.[^.]+$/,'');
-  return base.length>max ? base.slice(0,max-1)+'…' : base;
+function fileLabel(f){
+  return (f.label!=null && f.label!=='') ? f.label : f.name.replace(/\.[^.]+$/,'');
+}
+function truncLabel(f,max){
+  const s=fileLabel(f);
+  return s.length>max ? s.slice(0,max-1)+'…' : s;
 }
 $('quickBtns').querySelectorAll('[data-q]').forEach(b=>{
   b.onclick=()=>{
@@ -1250,7 +1338,7 @@ function renderLegend(){
   const g=$('legendG');
   if (!state.legend || !P || !P.trs.length){ g.innerHTML=''; return; }
   const entries=P.trs.map(t=>({ t,
-    label:keyLabel(t.key)+' · '+shortName(t.f.name,16)+(P.mode==='xy'&&t.axis==='R'?'  →R':'') }));
+    label:keyLabel(t.key)+' · '+truncLabel(t.f,16)+(P.mode==='xy'&&t.axis==='R'?'  →R':'') }));
   const lineH=17, pad=9, sample=26;
   const note= P.mode==='smith'
     ? 'color = S-param · dash = file · ○ start ● end'
@@ -1284,7 +1372,7 @@ function markerText(m){
   if (!f) return '';
   const x=f.parsed.freqHz[m.idx], y=traceY(f,m.key)[m.idx];
   const u=P?P.unit:dataUnit();
-  return keyLabel(m.key)+' · '+shortName(f.name,12)+' — '
+  return keyLabel(m.key)+' · '+truncLabel(f,12)+' — '
     +SNP.fmtNum(x/u.mult,6)+' '+u.name+', '+SNP.fmtNum(y,5)+' '+unitSuffix();
 }
 function unitSuffix(){
@@ -1416,7 +1504,7 @@ function onHover(ev){
     const rTag= d.t.axis==='R' ? ' <span style="color:var(--ink3)">→R</span>' : '';
     h+='<div class="trow'+(d===hoverFocus?' focus':'')+'">'
       +'<span class="swatch" style="border-top-style:'+(d.t.dash?'dashed':'solid')+'; color:'+d.t.color+'"></span>'
-      +keyLabel(d.t.key)+' · '+esc(shortName(d.t.f.name,14))+rTag
+      +keyLabel(d.t.key)+' · '+esc(truncLabel(d.t.f,14))+rTag
       +'<span class="val">'+SNP.fmtNum(d.t.y[d.idx],5)+' '+unitSuffix()+at+'</span></div>';
   });
   if (rows.length>10) h+='<div class="trow" style="color:var(--ink3)">… '+(rows.length-10)+' more</div>';
@@ -1443,7 +1531,7 @@ function smithHover(ev,mx,my){
   let h='<div class="tfreq">'+SNP.fmtNum(f.parsed.freqHz[best.idx]/P.unit.mult,6)+' '+P.unit.name
     +' <span style="color:var(--ink3)">(sample '+best.idx+')</span></div>'
     +'<div class="trow focus"><span class="swatch" style="border-top-style:'+(best.t.dash?'dashed':'solid')+'; color:'+best.t.color+'"></span>'
-    +keyLabel(best.t.key)+' · '+esc(shortName(f.name,14))+'</div>'
+    +keyLabel(best.t.key)+' · '+esc(truncLabel(f,14))+'</div>'
     +'<div class="trow">Γ (mag ∠ deg)<span class="val">'+SNP.fmtNum(mag,5)+' ∠ '+SNP.fmtNum(ang,5)+'°</span></div>'
     +'<div class="trow">Γ (re, im)<span class="val">'+SNP.fmtNum(best.re,5)+', '+SNP.fmtNum(best.im,5)+'</span></div>';
   if (pi===pj){
@@ -1625,7 +1713,11 @@ $('fileInput').addEventListener('change',async ev=>{
 }));
 document.addEventListener('drop',async ev=>{
   ev.preventDefault();
-  for (const file of ev.dataTransfer.files) loadText(file.name, await file.text());
+  for (const file of ev.dataTransfer.files){
+    const text=await file.text();
+    if (/\.json$/i.test(file.name)) loadProjectText(text);
+    else loadText(file.name, text);
+  }
 });
 
 // ---------- figure export: copy / PNG @ 900 dpi / fully vector PDF ----------
@@ -2110,8 +2202,188 @@ $('demoBtn').onclick=()=>{
   loadText('notch_R8_5p6GHz.s2p', demoText(5.6, 8, 'DB', 'MHz'));
 };
 
+// ---------- plot tabs ----------
+let editingTab=null;
+function syncHeaderControls(){
+  $('formatSel').value=state.format;
+  $('modeSel').value=state.plotMode;
+  $('themeSel').value=state.plotTheme;
+  $('gridChk').checked=state.grid;
+  $('legendChk').checked=state.legend;
+}
+function switchTab(id){
+  if (!state.tabs.some(t=>t.id===id)) return;
+  state.activeTabId=id; editingTab=null;
+  syncHeaderControls(); renderAll();
+}
+function addTab(){
+  const t=newTab(null, curTab());          // clone the current tab's whole plot setup
+  state.tabs.push(t);
+  switchTab(t.id);
+}
+function closeTab(id){
+  if (state.tabs.length<2) return;
+  const i=state.tabs.findIndex(t=>t.id===id);
+  if (i<0) return;
+  state.tabs.splice(i,1);
+  if (state.activeTabId===id) state.activeTabId=state.tabs[Math.max(0,i-1)].id;
+  editingTab=null;
+  syncHeaderControls(); renderAll();
+}
+function renameTab(id,name){
+  if (editingTab!==id) return;
+  editingTab=null;
+  const t=state.tabs.find(t=>t.id===id);
+  if (t && String(name).trim()) t.name=String(name).trim();
+  renderTabs();
+}
+function renderTabs(){
+  const el=$('tabbar');
+  el.innerHTML=state.tabs.map(t=>{
+    const nameHtml = editingTab===t.id
+      ? '<input class="tabedit" data-ted="'+t.id+'" value="'+esc(t.name)+'" spellcheck="false">'
+      : '<span data-tname="'+t.id+'" title="double-click to rename">'+esc(t.name)+'</span>';
+    return '<div class="tab'+(t.id===state.activeTabId?' act':'')+'" data-tab="'+t.id+'">'+nameHtml
+      +(state.tabs.length>1?'<button class="tclose" data-tclose="'+t.id+'" title="close tab">×</button>':'')
+      +'</div>';
+  }).join('')+'<button class="taddbtn" id="tabAdd" title="new plot tab (clones the current tab\'s setup — same files, independent plot)">+ tab</button>';
+  el.querySelectorAll('[data-tab]').forEach(d=>d.onclick=(ev)=>{
+    if (ev.target.closest('[data-tclose]')||ev.target.closest('.tabedit')) return;
+    switchTab(d.dataset.tab);
+  });
+  el.querySelectorAll('[data-tname]').forEach(sp=>sp.ondblclick=()=>{ editingTab=sp.dataset.tname; renderTabs(); });
+  el.querySelectorAll('[data-tclose]').forEach(b=>b.onclick=(ev)=>{ ev.stopPropagation(); closeTab(b.dataset.tclose); });
+  const add=$('tabAdd'); if (add) add.onclick=addTab;
+  const inp=el.querySelector('.tabedit');
+  if (inp){
+    inp.focus(); inp.select();
+    inp.addEventListener('keydown',ev=>{
+      if (ev.key==='Enter') renameTab(inp.dataset.ted, inp.value);
+      else if (ev.key==='Escape'){ editingTab=null; renderTabs(); ev.stopPropagation(); }
+    });
+    inp.addEventListener('blur',()=>renameTab(inp.dataset.ted, inp.value));
+  }
+}
+
+// ---------- projects: files + labels + styles + every tab, one .json ----------
+function buildProject(){
+  const fidToIdx=new Map(state.files.map((f,i)=>[f.id,i]));
+  const mapSet=set=>[...set].map(sl=>{
+    const i=sl.indexOf('|'), fid=sl.slice(0,i);
+    return fidToIdx.has(fid)? fidToIdx.get(fid)+'|'+sl.slice(i+1) : null;
+  }).filter(x=>x!=null);
+  return {
+    format:'sparam-studio-project', version:1, savedAt:new Date().toISOString(),
+    sidebarWidth: Math.round($('side').getBoundingClientRect().width),
+    files: state.files.map(f=>({ name:f.name, label:f.label||null, dashIdx:f.dashIdx, text:f.text })),
+    activeTab: Math.max(0, state.tabs.findIndex(t=>t.id===state.activeTabId)),
+    tabs: state.tabs.map(t=>({
+      name:t.name, sel:mapSet(t.sel), axisR:mapSet(t.axisR),
+      format:t.format, plotMode:t.plotMode, plotTheme:t.plotTheme,
+      grid:t.grid, legend:t.legend, view:{...t.view}, smithView:{...t.smithView},
+      markers:t.markers.map(m=>({ fileIndex:fidToIdx.get(m.fid), key:m.key, idx:m.idx }))
+        .filter(m=>m.fileIndex!=null),
+    })),
+  };
+}
+function saveProject(){
+  if (!state.files.length){ toast('nothing to save yet — import files first', false); return; }
+  saveTextFile('sparam_project_'+new Date().toISOString().slice(0,10)+'.json',
+    JSON.stringify(buildProject(), null, 1));
+}
+function loadProjectText(text){
+  let p;
+  try { p=JSON.parse(text); }
+  catch(e){ toast('✗ not a valid project file (JSON parse failed)', true); return false; }
+  if (!p || p.format!=='sparam-studio-project'){ toast('✗ not an S-Param Studio project file', true); return false; }
+  if (!Array.isArray(p.files) || !Array.isArray(p.tabs) || !p.tabs.length){
+    toast('✗ project file is missing its files/tabs sections', true); return false;
+  }
+  // parse EVERY file first — a project loads whole or not at all
+  const newFiles=[];
+  for (const pf of p.files){
+    const parsed=SNP.parseTouchstone(pf.name, pf.text);
+    if (!parsed.ok){ toast('✗ project load aborted — '+pf.name+': '+parsed.error, true); return false; }
+    newFiles.push({ id:'f'+(++fileCounter), name:pf.name, parsed, text:String(pf.text),
+      label:(typeof pf.label==='string'&&pf.label)?pf.label:null,
+      dashIdx: Number.isInteger(pf.dashIdx)? ((pf.dashIdx%FILE_DASHES.length)+FILE_DASHES.length)%FILE_DASHES.length : 0 });
+  }
+  state.files=newFiles;
+  dashCounter=newFiles.length;
+  derivedCache.clear(); colorMap.clear();
+  // register colors BEFORE touching state.tabs — colorFor reads the per-tab
+  // theme getter, which needs a live tab under it
+  newFiles.forEach(f=>Object.keys(f.parsed.S).sort(keyCmp).forEach(colorFor));
+  const fin=v=>(typeof v==='number'&&isFinite(v))?v:null;
+  const remap=arr=>new Set((Array.isArray(arr)?arr:[]).map(sl=>{
+    const i=String(sl).indexOf('|'); if (i<1) return null;
+    const f=newFiles[+String(sl).slice(0,i)];
+    const key=String(sl).slice(i+1);
+    return (f && f.parsed.S[key])? f.id+'|'+key : null;
+  }).filter(Boolean));
+  const FORMATS=['db','mag','deg','degU','re','im'];
+  state.tabs=[]; tabCounter=0;
+  const tabs=p.tabs.map((pt,ti)=>{
+    state.tabs=tabs0(ti);                       // keep newTab's default-name counter honest
+    const t=newTab((typeof pt.name==='string'&&pt.name.trim())?pt.name.trim():null);
+    t.sel=remap(pt.sel); t.axisR=remap(pt.axisR);
+    t.format=FORMATS.includes(pt.format)?pt.format:'db';
+    t.plotMode= pt.plotMode==='smith'?'smith':'xy';
+    t.plotTheme= pt.plotTheme==='light'?'light':'dark';
+    t.grid=pt.grid!==false; t.legend=pt.legend!==false;
+    const v=pt.view||{};
+    t.view={ xmin:fin(v.xmin), xmax:fin(v.xmax), ymin:fin(v.ymin), ymax:fin(v.ymax), yrmin:fin(v.yrmin), yrmax:fin(v.yrmax) };
+    const sv=pt.smithView||{};
+    t.smithView={ cx:isFinite(sv.cx)?sv.cx:0, cy:isFinite(sv.cy)?sv.cy:0, r:(isFinite(sv.r)&&sv.r>0)?sv.r:1.15 };
+    t.markers=(Array.isArray(pt.markers)?pt.markers:[]).map(m=>{
+      const f=newFiles[m.fileIndex];
+      return (f && f.parsed.S[m.key] && Number.isInteger(m.idx) && m.idx>=0 && m.idx<f.parsed.points)
+        ? { id:'m'+(++markerCounter), fid:f.id, key:m.key, idx:m.idx } : null;
+    }).filter(Boolean);
+    return t;
+  });
+  function tabs0(n){ return { length:n }; }     // only .length is read by newTab's default name
+  state.tabs=tabs;
+  const ai=Number.isInteger(p.activeTab)? Math.min(Math.max(0,p.activeTab), tabs.length-1) : 0;
+  state.activeTabId=tabs[ai].id;
+  editingLabel=null; editingTab=null;
+  if (isFinite(p.sidebarWidth)) setSidebarWidth(p.sidebarWidth);
+  syncHeaderControls(); renderAll();
+  toast('project loaded — '+newFiles.length+' file(s), '+tabs.length+' tab(s)', false);
+  return true;
+}
+$('projSaveBtn').onclick=saveProject;
+$('projOpenBtn').onclick=()=>$('projInput').click();
+$('projInput').addEventListener('change',async ev=>{
+  const f=ev.target.files[0];
+  if (f) loadProjectText(await f.text());
+  ev.target.value='';
+});
+
+// ---------- draggable sidebar ----------
+function setSidebarWidth(w){
+  $('side').style.width=Math.max(230, Math.min(640, w))+'px';
+}
+$('splitbar').addEventListener('mousedown',ev=>{
+  ev.preventDefault();
+  const bar=$('splitbar');
+  bar.classList.add('on');
+  document.body.style.userSelect='none';
+  const left=$('side').getBoundingClientRect().left;
+  const move=e=>setSidebarWidth(e.clientX-left);
+  const up=()=>{
+    bar.classList.remove('on');
+    document.body.style.userSelect='';
+    window.removeEventListener('mousemove',move);
+    window.removeEventListener('mouseup',up);
+  };
+  window.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',up);
+});
+
 // ---------- render all ----------
 function renderAll(){
+  renderTabs();
   renderFiles();
   renderMatrix();
   renderPlot();
@@ -2128,6 +2400,8 @@ window.SNPApp={
   setTheme:(t)=>{ $('themeSel').value=t; $('themeSel').dispatchEvent(new Event('change')); },
   geom:()=>P, mergeAndAdd, openMergeDialog, openInfoDialog, guessPorts,
   plotToPngBlob, plotToPdfBlob,
+  cycleDash, setFileLabel:(fid,label)=>{ const f=fileById(fid); if (f){ f.label=label||null; renderAll(); } },
+  addTab, switchTab, closeTab, curTab, buildProject, saveProject, loadProjectText, setSidebarWidth,
 };
 })();
 </script>
