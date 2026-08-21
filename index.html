@@ -1102,6 +1102,7 @@ $('quickBtns').querySelectorAll('[data-q]').forEach(b=>{
 // ---------- plot ----------
 const svg=$('plot');
 let P=null;   // current plot geometry (mode 'xy' or 'smith')
+let exportMode=false;   // true while capturing PNG/PDF: UI hint lines are omitted
 const M={ l:66, r:18, t:14, b:48 };
 // figure-surface chrome per plot theme (the legend/marker panels are part of the FIGURE,
 // unlike the tooltip, which is app UI and stays dark)
@@ -1317,7 +1318,8 @@ function renderSmith(W,H,trs,unit){
       if (inPlot(X2,Y2)) a+='<text x="'+X2+'" y="'+(Y2+3)+'" text-anchor="middle" style="font-size:10px">-'+lab+'</text>';
     }
   }
-  a+='<text class="legendnote" x="'+(P.l+4)+'" y="'+(P.t+P.h-5)+'">grid labels: z/Z0 · X range = frequency window · drag = zoom</text>';
+  if (!exportMode)
+    a+='<text class="legendnote" x="'+(P.l+4)+'" y="'+(P.t+P.h-5)+'">grid labels: z/Z0 · X range = frequency window · drag = zoom</text>';
   $('axesG').innerHTML=a;
 
   // loci: raw complex samples, full resolution, no interpolation
@@ -1344,12 +1346,13 @@ function renderLegend(){
   const entries=P.trs.map(t=>({ t,
     label:keyLabel(t.key)+' · '+truncLabel(t.f,16)+(P.mode==='xy'&&t.axis==='R'?'  →R':'') }));
   const lineH=17, pad=9, sample=26;
-  const note= P.mode==='smith'
+  const note= exportMode ? null : (P.mode==='smith'
     ? 'color = S-param · dash = file · ○ start ● end · drag moves'
-    : 'color = S-param · dash = file · click hides · drag moves';
-  const wMax=Math.max(Math.max(...entries.map(e=>e.label.length))*6.6 + sample + 30, note.length*5.3 + 18);
+    : 'color = S-param · dash = file · click hides · drag moves');
+  const wMax=Math.max(Math.max(...entries.map(e=>e.label.length))*6.6 + sample + 30,
+    note? note.length*5.3 + 18 : 0);
   const w=Math.min(wMax, 340);
-  const h=entries.length*lineH + pad*2 + 13;
+  const h=entries.length*lineH + pad*2 + (note?13:0);
   let x, y;
   const lp=curTab().legendPos;
   if (lp && isFinite(lp.fx) && isFinite(lp.fy)){ x=P.l+lp.fx*P.w; y=P.t+lp.fy*P.h; }
@@ -1366,7 +1369,8 @@ function renderLegend(){
       +(e.t.dash?' stroke-dasharray="'+e.t.dash+'"':'')+'/>'
       +'<text class="legendtext" x="'+(x+9+sample+7)+'" y="'+(yy+3.5)+'">'+esc(e.label)+'</text></g>';
   });
-  s+='<text class="legendnote" x="'+(x+9)+'" y="'+(y+h-6)+'">'+note+'</text></g>';
+  if (note) s+='<text class="legendnote" x="'+(x+9)+'" y="'+(y+h-6)+'">'+note+'</text>';
+  s+='</g>';
   g.innerHTML=s;
   g.querySelectorAll('[data-leg]').forEach(el=>{
     el.addEventListener('click',()=>{
@@ -1825,7 +1829,10 @@ function pngWithDpi(buf, dpi){
   return out;
 }
 async function plotToPngBlob(dpi){
-  const { clone, w, h }=bakeSvgClone();
+  exportMode=true; renderPlot();
+  let clone, w, h;
+  try { ({ clone, w, h }=bakeSvgClone()); }
+  finally { exportMode=false; renderPlot(); }
   const xml=new XMLSerializer().serializeToString(clone);
   const svgUrl=URL.createObjectURL(new Blob([xml],{type:'image/svg+xml;charset=utf-8'}));
   try {
@@ -1862,6 +1869,11 @@ function pdfEsc(s){
   return o;
 }
 function plotToPdfBlob(){
+  exportMode=true; renderPlot();
+  try { return plotToPdfInner(); }
+  finally { exportMode=false; renderPlot(); }
+}
+function plotToPdfInner(){
   const src=$('plot');
   const rect=src.getBoundingClientRect();
   const W=rect.width, H=rect.height;
