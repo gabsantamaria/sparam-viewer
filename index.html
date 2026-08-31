@@ -363,7 +363,8 @@
     <div id="hintbar">
       <span><b>hover</b> = live readout (snaps to real data samples — never interpolated)</span>
       <span><b>click</b> = pin marker</span>
-      <span><b>drag</b> = zoom</span>
+      <span><b>scroll</b> = zoom at cursor</span>
+      <span><b>drag</b> = pan on Smith · box-zoom on XY (⇧drag pans)</span>
       <span><b>double-click</b> = reset zoom</span>
       <span><b>legend</b>: drag moves · click entry hides · double-click resets · ○ start ● end on Smith</span>
       <span style="margin-left:auto"><b>color = S-parameter · line style = file · matrix cell cycles – / L / R axis</b></span>
@@ -1629,10 +1630,8 @@ function renderSmith(W,H,trs,unit){
   $('axesG').innerHTML=a;
 
   // loci: raw complex samples, full resolution, no interpolation
+  // (no placeholder text here — the design overlay draws on an empty chart)
   let ph='';
-  if (!trs.length){
-    ph='<text x="'+(P.l+P.w/2)+'" y="'+(P.t+P.h/2)+'" text-anchor="middle" style="font-size:13px" fill="var(--ink3)">no traces selected</text>';
-  }
   for (const e of P.segs){
     const t=e.t, seg=e.seg;
     if (!seg.n) continue;
@@ -1949,6 +1948,14 @@ overlay.addEventListener('mousedown',ev=>{
   if (ev.button!==0) return;
   const r=svg.getBoundingClientRect();
   drag={ x0:ev.clientX-r.left, y0:ev.clientY-r.top, x1:ev.clientX-r.left, y1:ev.clientY-r.top, moved:false };
+  if (P && (P.mode==='smith' || ev.shiftKey)){
+    drag.pan=true;                                   // Smith: drag pans; XY: shift-drag pans
+    if (P.mode==='smith'){ drag.sv={...state.smithView}; drag.sc=P.sc; }
+    else {
+      drag.v0={ x0:P.x0, x1:P.x1, yL0:P.yL0, yL1:P.yL1, yR0:P.yR0, yR1:P.yR1 };
+      drag.pw=P.w; drag.ph=P.h; drag.hasR=P.hasR;
+    }
+  }
   window.addEventListener('mousemove',dragMove);
   window.addEventListener('mouseup',dragUp);
 });
@@ -1958,15 +1965,33 @@ function dragMove(ev){
   drag.x1=Math.max(P.l,Math.min(P.l+P.w, ev.clientX-r.left));
   drag.y1=Math.max(P.t,Math.min(P.t+P.h, ev.clientY-r.top));
   if (Math.abs(drag.x1-drag.x0)>4||Math.abs(drag.y1-drag.y0)>4) drag.moved=true;
-  const b=$('bandRect');
-  if (drag.moved){
-    clearHover();
-    b.setAttribute('x',Math.min(drag.x0,drag.x1));
-    b.setAttribute('y',Math.min(drag.y0,drag.y1));
-    b.setAttribute('width',Math.abs(drag.x1-drag.x0));
-    b.setAttribute('height',Math.abs(drag.y1-drag.y0));
-    b.setAttribute('visibility','visible');
+  if (!drag.moved) return;
+  clearHover();
+  if (drag.pan){
+    if (P.mode==='smith'){
+      const sv=state.smithView;
+      sv.cx=drag.sv.cx-(drag.x1-drag.x0)/drag.sc;
+      sv.cy=drag.sv.cy+(drag.y1-drag.y0)/drag.sc;
+    } else {
+      const v=drag.v0;
+      const dx=-(drag.x1-drag.x0)*(v.x1-v.x0)/drag.pw;
+      state.view.xmin=v.x0+dx; state.view.xmax=v.x1+dx;
+      const dyL=(drag.y1-drag.y0)*(v.yL1-v.yL0)/drag.ph;
+      state.view.ymin=v.yL0+dyL; state.view.ymax=v.yL1+dyL;
+      if (drag.hasR){
+        const dyR=(drag.y1-drag.y0)*(v.yR1-v.yR0)/drag.ph;
+        state.view.yrmin=v.yR0+dyR; state.view.yrmax=v.yR1+dyR;
+      }
+    }
+    renderPlot();
+    return;
   }
+  const b=$('bandRect');
+  b.setAttribute('x',Math.min(drag.x0,drag.x1));
+  b.setAttribute('y',Math.min(drag.y0,drag.y1));
+  b.setAttribute('width',Math.abs(drag.x1-drag.x0));
+  b.setAttribute('height',Math.abs(drag.y1-drag.y0));
+  b.setAttribute('visibility','visible');
 }
 function dragUp(ev){
   window.removeEventListener('mousemove',dragMove);
@@ -1975,17 +2000,8 @@ function dragUp(ev){
   if (!drag) return;
   const d=drag; drag=null;
   if (d.moved){
+    if (d.pan){ scheduleAutosave(); return; }        // the pan already landed frame by frame
     const wx=Math.abs(d.x1-d.x0), wy=Math.abs(d.y1-d.y0);
-    if (P.mode==='smith'){
-      if (wx>8||wy>8){
-        const sv=state.smithView;
-        const reA=sv.cx+(Math.min(d.x0,d.x1)-P.cx0)/P.sc, reB=sv.cx+(Math.max(d.x0,d.x1)-P.cx0)/P.sc;
-        const imA=sv.cy-(Math.max(d.y0,d.y1)-P.cy0)/P.sc, imB=sv.cy-(Math.min(d.y0,d.y1)-P.cy0)/P.sc;
-        state.smithView={ cx:(reA+reB)/2, cy:(imA+imB)/2, r:Math.max((reB-reA)/2,(imB-imA)/2, 1e-4) };
-        renderPlot();
-      }
-      return;
-    }
     if (wx>8){ state.view.xmin=pxToX(Math.min(d.x0,d.x1)); state.view.xmax=pxToX(Math.max(d.x0,d.x1)); }
     if (wy>8){
       // the band is one pixel gesture — BOTH axes re-fit to it through their own scales
@@ -2011,6 +2027,36 @@ function dragUp(ev){
     }, 260);
   }
 }
+svg.addEventListener('wheel',ev=>{
+  if (!P) return;
+  const r=svg.getBoundingClientRect();
+  const mx=ev.clientX-r.left, my=ev.clientY-r.top;
+  if (mx<P.l||mx>P.l+P.w||my<P.t||my>P.t+P.h) return;
+  ev.preventDefault();
+  const f=Math.exp(-ev.deltaY*0.0016);               // scroll up = zoom in, pinned at the cursor
+  if (P.mode==='smith'){
+    const sv=state.smithView;
+    const re0=sv.cx+(mx-P.cx0)/P.sc, im0=sv.cy+(P.cy0-my)/P.sc;
+    const r2=Math.max(1e-4, Math.min(50, sv.r/f));
+    const f2=sv.r/r2;
+    sv.cx=re0-(re0-sv.cx)/f2;
+    sv.cy=im0-(im0-sv.cy)/f2;
+    sv.r=r2;
+  } else {
+    const wx=pxToX(mx);
+    state.view.xmin=wx-(wx-P.x0)/f;
+    state.view.xmax=wx+(P.x1-wx)/f;
+    const wyL=pxToYAx(my,'L');
+    state.view.ymin=wyL-(wyL-P.yL0)/f;
+    state.view.ymax=wyL+(P.yL1-wyL)/f;
+    if (P.hasR){
+      const wyR=pxToYAx(my,'R');
+      state.view.yrmin=wyR-(wyR-P.yR0)/f;
+      state.view.yrmax=wyR+(P.yR1-wyR)/f;
+    }
+  }
+  renderPlot(); scheduleAutosave();
+},{ passive:false });
 overlay.addEventListener('dblclick',()=>{
   clearTimeout(clickTimer);
   state.view={ xmin:null,xmax:null,ymin:null,ymax:null,yrmin:null,yrmax:null };
