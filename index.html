@@ -214,6 +214,24 @@
   }
   .sbtn.on{ color:#fff; background:#1d4ed8; border-color:#3b82f6; }
   .sbtn.warn{ color:#f59e0b; border-color:#7c5803; }
+  .chainblk{
+    border:1px solid var(--line); border-radius:7px; padding:5px 6px;
+    margin-bottom:7px; background:rgba(255,255,255,.015);
+  }
+  .chainblk.act{ border-color:#2c4266; box-shadow:inset 2px 0 0 var(--accent); }
+  .chainblk.ghost{ opacity:.5; }
+  .chainhead{ display:flex; gap:5px; align-items:center; margin-bottom:4px; }
+  .chainhead .chname{
+    flex:1; min-width:0; font:inherit; font-size:12.5px; font-weight:600;
+    background:transparent; border:1px solid transparent; border-radius:4px;
+    padding:1px 4px; color:var(--ink);
+  }
+  .chainhead .chname:hover, .chainhead .chname:focus{ border-color:var(--line); background:var(--panel2); }
+  .chainhead .chz0{
+    font-size:10px; color:var(--accent); border:1px solid #1d4ed8;
+    border-radius:4px; padding:0 4px;
+  }
+  .chsum{ color:var(--ink3); font-size:11.5px; padding:0 4px 2px; }
   svg text{ font:11px "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace; fill:var(--ink2); }
   svg .axislabel{ font-size:12px; fill:var(--ink2); }
   svg .legendtext{ font-size:11.5px; fill:var(--ink); }
@@ -316,28 +334,9 @@
       <label class="inline">Q <input type="text" id="smQ" placeholder="1, 2" style="width:4.5em" title="constant-Q circles, comma-separated"></label>
     </div>
     <div class="smithrow" style="color:var(--ink3)">trace freq window = the X range fields above</div>
-    <div class="smithrow">
-      <select id="smChain" style="max-width:7.5em" title="which list the editor below works on"></select>
-      <input type="text" id="smChainName" style="width:6em" title="rename this list">
-      <button class="sbtn" id="smChainAdd" title="new empty list">+ list</button>
-      <button class="sbtn" id="smChainDup" title="duplicate this list">⧉</button>
-      <button class="sbtn" id="smChainEye" title="show / hide this whole list">👁</button>
-      <button class="sbtn" id="smChainDel" title="delete this list">✕</button>
-    </div>
     <div id="smSteps"></div>
     <div class="quickbtns">
-      <button class="btn ghost" data-sadd="start" title="an impedance/admittance point">+ point</button>
-      <button class="btn ghost" data-sadd="series" title="series impedance from the last point">+ series</button>
-      <button class="btn ghost" data-sadd="shunt" title="shunt admittance from the last point">+ shunt</button>
-      <button class="btn ghost" data-sadd="line" title="transmission-line section (Z0, electrical length)">+ line</button>
-      <button class="btn ghost" data-sadd="renorm" title="renormalize the chart to another Z0 from this step on">+ renorm</button>
-    </div>
-    <div class="smithrow">
-      <button class="btn ghost mini" id="ssFirst" title="first step only">⏮</button>
-      <button class="btn ghost mini" id="ssPrev" title="one step back">◀</button>
-      <span id="ssPos" style="min-width:3.5em;text-align:center"></span>
-      <button class="btn ghost mini" id="ssNext" title="one step forward">▶</button>
-      <button class="btn ghost mini" id="ssAll" title="show every step">all</button>
+      <button class="btn ghost" id="smChainAdd" title="add another independent design list">+ new list</button>
     </div>
     </div>
     <h2>Markers <span class="rule"></span></h2>
@@ -871,17 +870,17 @@ const SNP = (function(){
         if (!c || typeof c!=='object') continue;
         chains.push({
           name:(typeof c.name==='string'&&c.name.trim())? c.name.trim().slice(0,24):'list',
-          hide:!!c.hide,
+          hide:!!c.hide, open:c.open!==false,
           cursor:(Number.isInteger(c.cursor)&&c.cursor>=0)? c.cursor:null,
           steps:sanSteps(c.steps),
         });
       }
     } else if (Array.isArray(sm.steps)){          // legacy single-chain projects/autosaves
-      chains.push({ name:'list 1', hide:false,
+      chains.push({ name:'list 1', hide:false, open:true,
         cursor:(Number.isInteger(sm.cursor)&&sm.cursor>=0)? sm.cursor:null,
         steps:sanSteps(sm.steps) });
     }
-    if (!chains.length) chains.push({ name:'list 1', hide:false, cursor:null, steps:[] });
+    if (!chains.length) chains.push({ name:'list 1', hide:false, open:true, cursor:null, steps:[] });
     for (const c of chains){
       if (!c.steps.length) c.cursor=null;
       else if (c.cursor!=null) c.cursor=Math.min(c.cursor, c.steps.length-1);
@@ -3117,16 +3116,9 @@ function renderSmithPanel(){
   $('smYGrid').checked=sm.showYGrid;
   $('smQ').value=sm.qList.join(', ');
   sm.active=Math.min(sm.active, sm.chains.length-1);
-  const act=sm.chains[sm.active];
-  $('smChain').innerHTML=sm.chains.map((ch,i)=>
-    '<option value="'+i+'"'+(i===sm.active?' selected':'')+'>'+(ch.hide?'∅ ':'')+esc(ch.name)+'</option>').join('');
-  $('smChainName').value=act.name;
-  $('smChainEye').classList.toggle('on', !act.hide);
-  const solve=SNP.smithSolve(act.steps, sm.z0);
-  const lim= act.cursor==null? act.steps.length-1 : act.cursor;
-  $('smSteps').innerHTML= act.steps.map((st,i)=>{
-    const rec=solve[i]||{};
-    const err= rec.ok===false? '<button class="sbtn warn" title="'+esc(rec.err||'error')+'">⚠</button>' : '';
+
+  const stepRowHtml=(ch,ci,st,i,rec,lim)=>{
+    const err= rec && rec.ok===false? '<button class="sbtn warn" title="'+esc(rec.err||'error')+'">⚠</button>' : '';
     let mid='';
     if (st.kind==='line')
       mid='Z0<input type="text" class="num" data-sf="z0line" value="'+st.z0line+'" title="line characteristic impedance, Ω — ↑/↓ steps the digit at the cursor"> '
@@ -3140,19 +3132,126 @@ function renderSmithPanel(){
         +'<option value="y"'+(st.q==='y'?' selected':'')+'>Y</option></select>'
         +'<input type="text" data-sf="value" value="'+esc(st.value)+'" placeholder="1+j2" title="complex value — ↑/↓ steps the digit at the cursor for live sweeping">'
         +'<button class="sbtn'+(st.norm?' on':'')+'" data-st="norm" title="normalized to the chart Z0 (on) or absolute Ω / S (off)">/Z₀</button>';
-    const zEnd= rec.zAbs
+    const zEnd= rec && rec.zAbs
       ? '<span class="zout">→ '+SNP.fmtNum(rec.zAbs.re,4)+(rec.zAbs.im>=0?'+j':'−j')+SNP.fmtNum(Math.abs(rec.zAbs.im),4)+' Ω</span>' : '';
-    return '<div class="steprow'+(i>lim?' dim':'')+'" data-srow="'+i+'">'
+    return '<div class="steprow'+(i>lim?' dim':'')+'" data-srow="'+ci+':'+i+'">'
       +'<span class="k">'+(i+1)+'</span><span class="kind">'+st.kind+'</span>'
       +mid+err
       +'<input type="color" data-sf="color" value="'+st.color+'" title="path color">'
       +'<input type="number" class="op" data-sf="op" min="0.1" max="1" step="0.1" value="'+st.op+'" title="opacity">'
       +'<button class="sbtn'+(st.hl?' on':'')+'" data-st="hl" title="highlight (bold)">HL</button>'
       +'<button class="sbtn'+(st.hide?'':' on')+'" data-st="hide" title="show / hide this step">👁</button>'
-      +'<button class="sbtn" data-sdel="'+i+'" title="delete this step">✕</button>'
+      +'<button class="sbtn" data-sdel="'+ci+':'+i+'" title="delete this step">✕</button>'
       +zEnd+'</div>';
-  }).join('') || '<div class="empty">Add a start point, then series/shunt elements, line sections or a renormalization.</div>';
-  $('ssPos').textContent= act.steps.length? ((act.cursor==null?'all':(act.cursor+1))+' / '+act.steps.length) : '—';
+  };
+
+  $('smSteps').innerHTML=sm.chains.map((ch,ci)=>{
+    const solve=SNP.smithSolve(ch.steps, sm.z0);
+    const lim= ch.cursor==null? ch.steps.length-1 : ch.cursor;
+    const head='<div class="chainhead">'
+      +'<button class="sbtn" data-copen="'+ci+'" title="'+(ch.open!==false?'collapse':'expand')+'">'+(ch.open!==false?'▾':'▸')+'</button>'
+      +'<input type="text" class="chname" data-cname="'+ci+'" value="'+esc(ch.name)+'" title="list name">'
+      +'<button class="sbtn'+(ch.hide?'':' on')+'" data-ceye="'+ci+'" title="show / hide this whole list on the chart">👁</button>'
+      +'<button class="sbtn" data-cdup="'+ci+'" title="duplicate this list">⧉</button>'
+      +'<button class="sbtn" data-cdel="'+ci+'" title="delete this list">✕</button>'
+      +(ci===sm.active?'<span class="chz0" title="this list\'s renorm steps drive the chart Z₀">Z₀</span>':'')
+      +'</div>';
+    let body='';
+    if (ch.open!==false){
+      body=(ch.steps.map((st,i)=>stepRowHtml(ch,ci,st,i,solve[i],lim)).join('')
+          || '<div class="empty">empty — add a start point below</div>')
+        +'<div class="quickbtns">'
+        +['start','series','shunt','line','renorm'].map(k=>
+          '<button class="btn ghost" data-sadd="'+k+'" data-c="'+ci+'">+ '+(k==='start'?'point':k)+'</button>').join('')
+        +'</div>'
+        +'<div class="smithrow">'
+        +'<button class="btn ghost mini" data-ssf="'+ci+'" title="first step only">⏮</button>'
+        +'<button class="btn ghost mini" data-ssp="'+ci+'" title="one step back">◀</button>'
+        +'<span style="min-width:3.4em;text-align:center">'+(ch.steps.length? ((ch.cursor==null?'all':(ch.cursor+1))+' / '+ch.steps.length):'—')+'</span>'
+        +'<button class="btn ghost mini" data-ssn="'+ci+'" title="one step forward">▶</button>'
+        +'<button class="btn ghost mini" data-ssa="'+ci+'" title="show every step">all</button>'
+        +'</div>';
+    } else {
+      body='<div class="chsum">'+ch.steps.length+' step'+(ch.steps.length===1?'':'s')
+        +(ch.cursor!=null?' · slideshow at '+(ch.cursor+1):'')+(ch.hide?' · hidden':'')+'</div>';
+    }
+    return '<div class="chainblk'+(ci===sm.active?' act':'')+(ch.hide?' ghost':'')+'" data-chain="'+ci+'">'+head+body+'</div>';
+  }).join('');
+
+  const wrap=$('smSteps');
+  const chainOf=el=>sm.chains[+el.dataset.chain];
+  // clicking a block makes it the chart-Z0 (renorm) reference — no panel rebuild,
+  // so input focus survives; only the chart re-renders
+  wrap.querySelectorAll('[data-chain]').forEach(blk=>{
+    blk.addEventListener('mousedown',()=>{
+      const ci=+blk.dataset.chain;
+      if (sm.active===ci) return;
+      sm.active=ci;
+      wrap.querySelectorAll('[data-chain]').forEach(b=>b.classList.toggle('act', +b.dataset.chain===ci));
+      renderPlot(); scheduleAutosave();
+    });
+  });
+  wrap.querySelectorAll('[data-copen]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.copen]; ch.open= ch.open===false; renderAll();
+  });
+  wrap.querySelectorAll('[data-cname]').forEach(inp=>inp.addEventListener('change',()=>{
+    const ch=sm.chains[+inp.dataset.cname];
+    const v=inp.value.trim();
+    if (v) ch.name=v.slice(0,24);
+    renderAll();
+  }));
+  wrap.querySelectorAll('[data-ceye]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.ceye]; ch.hide=!ch.hide; renderAll();
+  });
+  wrap.querySelectorAll('[data-cdup]').forEach(b=>b.onclick=()=>{
+    if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
+    const ci=+b.dataset.cdup, src=sm.chains[ci];
+    const copy=sanSmith({ chains:[src] }).chains[0];
+    copy.name=(src.name+' copy').slice(0,24);
+    sm.chains.splice(ci+1, 0, copy);
+    sm.active=ci+1;
+    renderAll();
+  });
+  wrap.querySelectorAll('[data-cdel]').forEach(b=>b.onclick=()=>{
+    sm.chains.splice(+b.dataset.cdel,1);
+    if (!sm.chains.length) sm.chains.push({ name:'list 1', hide:false, cursor:null, open:true, steps:[] });
+    sm.active=Math.max(0, Math.min(sm.active, sm.chains.length-1));
+    renderAll();
+  });
+  wrap.querySelectorAll('[data-sadd]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.c];
+    if (!ch) return;
+    if (ch.steps.length>=64){ toast('a design list is capped at 64 steps', false); return; }
+    const kind=b.dataset.sadd;
+    ch.steps.push(sanSmith({ steps:[{
+      kind, q: kind==='shunt'?'y':'z', norm:true,
+      value: kind==='start'? '1+j0' : 'j1',
+      z0line:50, eleDeg:45, swr:kind==='line', z0new:50,
+      color:EXTRA_COLORS[(ch.steps.length + (+b.dataset.c)*5)%EXTRA_COLORS.length], op:1,
+    }] }).chains[0].steps[0]);
+    if (ch.cursor!=null) ch.cursor=ch.steps.length-1;
+    renderAll();
+  });
+  wrap.querySelectorAll('[data-ssf]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.ssf]; if (ch.steps.length){ ch.cursor=0; renderAll(); }
+  });
+  wrap.querySelectorAll('[data-ssp]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.ssp];
+    if (!ch.steps.length) return;
+    const cur= ch.cursor==null? ch.steps.length-1 : ch.cursor;
+    ch.cursor=Math.max(0, cur-1);
+    renderAll();
+  });
+  wrap.querySelectorAll('[data-ssn]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.ssn];
+    if (ch.cursor==null) return;
+    ch.cursor= ch.cursor>=ch.steps.length-1? null : ch.cursor+1;
+    renderAll();
+  });
+  wrap.querySelectorAll('[data-ssa]').forEach(b=>b.onclick=()=>{
+    const ch=sm.chains[+b.dataset.ssa]; ch.cursor=null; renderAll();
+  });
+
   const sweepKeys=(inp, commit)=>{
     inp.addEventListener('keydown',ev=>{
       if (ev.key!=='ArrowUp' && ev.key!=='ArrowDown') return;
@@ -3167,8 +3266,9 @@ function renderSmithPanel(){
       scheduleAutosave();
     });
   };
-  $('smSteps').querySelectorAll('[data-srow]').forEach(row=>{
-    const st=act.steps[+row.dataset.srow];
+  wrap.querySelectorAll('[data-srow]').forEach(row=>{
+    const [ci,si]=row.dataset.srow.split(':').map(Number);
+    const ch=sm.chains[ci], st=ch && ch.steps[si];
     if (!st) return;
     row.querySelectorAll('[data-sf]').forEach(inp=>{
       const sf=inp.dataset.sf;
@@ -3190,50 +3290,17 @@ function renderSmithPanel(){
       b.addEventListener('click',()=>{ st[b.dataset.st]=!st[b.dataset.st]; renderAll(); });
     });
   });
-  $('smSteps').querySelectorAll('[data-sdel]').forEach(b=>{
+  wrap.querySelectorAll('[data-sdel]').forEach(b=>{
     b.onclick=()=>{
-      act.steps.splice(+b.dataset.sdel,1);
-      if (act.cursor!=null) act.cursor= act.steps.length? Math.min(act.cursor, act.steps.length-1) : null;
+      const [ci,si]=b.dataset.sdel.split(':').map(Number);
+      const ch=sm.chains[ci];
+      if (!ch) return;
+      ch.steps.splice(si,1);
+      if (ch.cursor!=null) ch.cursor= ch.steps.length? Math.min(ch.cursor, ch.steps.length-1) : null;
       renderAll();
     };
   });
 }
-function activeChain(){
-  const sm=state.smith;
-  sm.active=Math.min(sm.active, sm.chains.length-1);
-  return sm.chains[sm.active];
-}
-$('smChain').addEventListener('change',()=>{ state.smith.active=+$('smChain').value||0; renderAll(); });
-$('smChainName').addEventListener('change',()=>{
-  const v=$('smChainName').value.trim();
-  if (v) activeChain().name=v.slice(0,24);
-  renderAll();
-});
-$('smChainAdd').onclick=()=>{
-  const sm=state.smith;
-  if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
-  sm.chains.push({ name:'list '+(sm.chains.length+1), hide:false, cursor:null, steps:[] });
-  sm.active=sm.chains.length-1;
-  renderAll();
-};
-$('smChainDup').onclick=()=>{
-  const sm=state.smith;
-  if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
-  const src=activeChain();
-  const copy=sanSmith({ chains:[src] }).chains[0];
-  copy.name=(src.name+' copy').slice(0,24);
-  sm.chains.splice(sm.active+1, 0, copy);
-  sm.active=sm.active+1;
-  renderAll();
-};
-$('smChainEye').onclick=()=>{ const ch=activeChain(); ch.hide=!ch.hide; renderAll(); };
-$('smChainDel').onclick=()=>{
-  const sm=state.smith;
-  sm.chains.splice(sm.active,1);
-  if (!sm.chains.length) sm.chains.push({ name:'list 1', hide:false, cursor:null, steps:[] });
-  sm.active=Math.max(0, Math.min(sm.active, sm.chains.length-1));
-  renderAll();
-};
 $('smZ0').addEventListener('change',()=>{
   const v=parseFloat($('smZ0').value);
   if (v>0 && isFinite(v)) state.smith.z0=v;
@@ -3257,36 +3324,13 @@ $('smQ').addEventListener('change',()=>{
   state.smith.qList=$('smQ').value.split(/[,;\s]+/).map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8);
   renderAll();
 });
-document.querySelectorAll('[data-sadd]').forEach(b=>{
-  b.onclick=()=>{
-    const kind=b.dataset.sadd, sm=state.smith;
-    const ch=sm.chains[Math.min(sm.active, sm.chains.length-1)];
-    if (ch.steps.length>=64){ toast('a design list is capped at 64 steps', false); return; }
-    ch.steps.push(sanSmith({ steps:[{
-      kind, q: kind==='shunt'?'y':'z', norm:true,
-      value: kind==='start'? '1+j0' : 'j1',
-      z0line:50, eleDeg:45, swr:kind==='line', z0new:50,
-      color:EXTRA_COLORS[(ch.steps.length + sm.active*5)%EXTRA_COLORS.length], op:1,
-    }] }).chains[0].steps[0]);
-    if (ch.cursor!=null) ch.cursor=ch.steps.length-1;   // slideshow advances to the new step
-    renderAll();
-  };
-});
-$('ssFirst').onclick=()=>{ const ch=activeChain(); if (ch.steps.length){ ch.cursor=0; renderAll(); } };
-$('ssPrev').onclick=()=>{
-  const ch=activeChain();
-  if (!ch.steps.length) return;
-  const cur= ch.cursor==null? ch.steps.length-1 : ch.cursor;
-  ch.cursor=Math.max(0, cur-1);
+$('smChainAdd').onclick=()=>{
+  const sm=state.smith;
+  if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
+  sm.chains.push({ name:'list '+(sm.chains.length+1), hide:false, cursor:null, open:true, steps:[] });
+  sm.active=sm.chains.length-1;
   renderAll();
 };
-$('ssNext').onclick=()=>{
-  const ch=activeChain();
-  if (ch.cursor==null) return;
-  ch.cursor= ch.cursor>=ch.steps.length-1? null : ch.cursor+1;
-  renderAll();
-};
-$('ssAll').onclick=()=>{ activeChain().cursor=null; renderAll(); };
 
 // ---------- render all ----------
 function renderAll(){
