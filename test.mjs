@@ -681,5 +681,47 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   check('gammaOfZ null at Z=-z0 (not Γ=+1)', SNP.gammaOfZ(-50, 0, 50) === null);
 }
 
+// ---------- 33. caret-place stepping (the value-field tuner) ----------
+{
+  const S = SNP.stepComplexAt;
+  const eq = (got, val, car, name) => check(name, got && got.value === val && got.caret === car,
+    got ? got.value + ' @' + got.caret : 'null');
+
+  eq(S('1.25', 4, 1), '1.26', 4, 'step: last decimal up');
+  eq(S('1.25', 4, -1), '1.24', 4, 'step: last decimal down');
+  eq(S('1.25', 3, 1), '1.35', 3, 'step: tenths place (caret mid-token)');
+  eq(S('1.25', 1, 1), '2.25', 1, 'step: ones place');
+  eq(S('1.25', 2, 1), '1.35', 3, 'step: caret right after the dot steps the first fraction digit');
+  eq(S('25', 1, 1), '35', 1, 'step: integer tens place');
+  eq(S('25', 0, 1), '35', 1, 'step: caret at start uses the first digit');
+  eq(S('9.9', 3, 1), '10.0', 4, 'carry widens the token and the caret follows the place');
+  eq(S('10.0', 4, -1), '9.9', 3, 'borrow narrows the token');
+  eq(S('0.1', 3, -1), '0.0', 3, 'step down to zero');
+  eq(S('0.0', 3, -1), '-0.1', 4, 'crossing zero adds a leading minus');
+  eq(S('-0.1', 4, 1), '0.0', 3, 'crossing back removes it');
+
+  // complex forms: the imaginary part steps independently, signs flip in place
+  eq(S('1+j2', 4, 1), '1+j3', 4, 'imag part up');
+  eq(S('1+j1', 4, -1), '1+j0', 4, 'imag to zero keeps the + slot');
+  eq(S('1+j0', 4, -1), '1-j1', 4, 'imag crossing zero flips + to -');
+  eq(S('1-j1', 4, 1), '1+j0', 4, 'and back');
+  eq(S('1+j2', 1, -1), '0+j2', 1, 'real part steps without touching the imag');
+  eq(S('-j0.5', 5, 1), '-j0.4', 5, 'negative pure-imaginary steps toward zero');
+  eq(S('-j0.4', 5, 1, 'x'), '-j0.3', 5, 'again');
+  const z = S('-j0.1', 5, 1);
+  check('pure-imag crossing zero drops the leading minus', z && z.value === 'j0.0', z && z.value);
+  eq(S('2j', 1, 1), '3j', 1, 'trailing-j form steps its number');
+
+  // caret in dead space snaps to the nearest number
+  const d = S('1+j2', 2, 1);   // caret on the '+' -> nearest digit is the '1'
+  check('caret on an operator steps the adjacent number', d && (d.value === '2+j2' || d.value === '1+j3'), d && d.value);
+  check('no numbers -> null', S('abc', 1, 1) === null && S('', 0, 1) === null);
+
+  // repeated stepping at a held caret is stable (the sweep gesture)
+  let st = { value: '1.00', caret: 3 };
+  for (let k = 0; k < 15; k++) st = S(st.value, st.caret, 1);
+  check('15 presses at the tenths place: 1.00 -> 2.50', st.value === '2.50', st.value);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);
