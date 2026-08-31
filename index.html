@@ -316,6 +316,14 @@
       <label class="inline">Q <input type="text" id="smQ" placeholder="1, 2" style="width:4.5em" title="constant-Q circles, comma-separated"></label>
     </div>
     <div class="smithrow" style="color:var(--ink3)">trace freq window = the X range fields above</div>
+    <div class="smithrow">
+      <select id="smChain" style="max-width:7.5em" title="which list the editor below works on"></select>
+      <input type="text" id="smChainName" style="width:6em" title="rename this list">
+      <button class="sbtn" id="smChainAdd" title="new empty list">+ list</button>
+      <button class="sbtn" id="smChainDup" title="duplicate this list">⧉</button>
+      <button class="sbtn" id="smChainEye" title="show / hide this whole list">👁</button>
+      <button class="sbtn" id="smChainDel" title="delete this list">✕</button>
+    </div>
     <div id="smSteps"></div>
     <div class="quickbtns">
       <button class="btn ghost" data-sadd="start" title="an impedance/admittance point">+ point</button>
@@ -834,6 +842,59 @@ const SNP = (function(){
     return out;
   }
 
+  // per-tab Smith design config sanitizer. BUNDLES: several independent step
+  // CHAINS, each with its own name / hide flag / slideshow cursor. A legacy
+  // single-chain shape ({steps, cursor}) migrates to chains[0].
+  function sanSmith(sm){
+    sm=(sm&&typeof sm==='object')?sm:{};
+    const sanSteps=arr=>{
+      const out=[];
+      if (Array.isArray(arr)) for (const t of arr.slice(0,64)){
+        if (!t || !['start','series','shunt','line','renorm'].includes(t.kind)) continue;
+        out.push({
+          kind:t.kind, q:t.q==='y'?'y':'z', norm:t.norm!==false,
+          value: typeof t.value==='string'? t.value.slice(0,40):'',
+          z0line:(isFinite(t.z0line)&&t.z0line>0)?+t.z0line:50,
+          eleDeg:isFinite(t.eleDeg)?+t.eleDeg:45,
+          swr:!!t.swr,
+          z0new:(isFinite(t.z0new)&&t.z0new>0)?+t.z0new:50,
+          color:/^#[0-9a-fA-F]{6}$/.test(t.color)? t.color:'#e11d48',
+          op:(isFinite(t.op)&&t.op>0&&t.op<=1)?+t.op:1,
+          hide:!!t.hide, hl:!!t.hl,
+        });
+      }
+      return out;
+    };
+    const chains=[];
+    if (Array.isArray(sm.chains)){
+      for (const c of sm.chains.slice(0,16)){
+        if (!c || typeof c!=='object') continue;
+        chains.push({
+          name:(typeof c.name==='string'&&c.name.trim())? c.name.trim().slice(0,24):'list',
+          hide:!!c.hide,
+          cursor:(Number.isInteger(c.cursor)&&c.cursor>=0)? c.cursor:null,
+          steps:sanSteps(c.steps),
+        });
+      }
+    } else if (Array.isArray(sm.steps)){          // legacy single-chain projects/autosaves
+      chains.push({ name:'list 1', hide:false,
+        cursor:(Number.isInteger(sm.cursor)&&sm.cursor>=0)? sm.cursor:null,
+        steps:sanSteps(sm.steps) });
+    }
+    if (!chains.length) chains.push({ name:'list 1', hide:false, cursor:null, steps:[] });
+    for (const c of chains){
+      if (!c.steps.length) c.cursor=null;
+      else if (c.cursor!=null) c.cursor=Math.min(c.cursor, c.steps.length-1);
+    }
+    return {
+      z0:(isFinite(sm.z0)&&sm.z0>0)?+sm.z0:50,
+      showYGrid:!!sm.showYGrid,
+      qList:Array.isArray(sm.qList)? sm.qList.map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8):[],
+      active:Math.min(Math.max(0, sm.active|0), chains.length-1),
+      chains,
+    };
+  }
+
   // tuner-style edit: step the digit at the caret by one unit of ITS decimal
   // place ("1.25" with the caret after the 2 -> 1.35/1.15). Pure textual
   // arithmetic on one number token of a complex string: the sign slot flips
@@ -1013,7 +1074,7 @@ const SNP = (function(){
   }
 
   return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint,
-    parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve, stepComplexAt };
+    parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve, stepComplexAt, sanSmith };
 })();
 if (typeof module!=='undefined' && module.exports) module.exports = SNP;
 //<<PURE_END>>
@@ -1039,32 +1100,7 @@ const FILE_DASHES=[
 const FORMAT_LABELS={ db:'|S| (dB)', mag:'|S| (linear)', deg:'Phase (°)', degU:'Phase, unwrapped (°)', re:'Re(S)', im:'Im(S)' };
 
 // files are SHARED; everything about how they are plotted lives on a TAB
-function sanSmith(sm){
-  sm=(sm&&typeof sm==='object')?sm:{};
-  const out={
-    z0:(isFinite(sm.z0)&&sm.z0>0)?+sm.z0:50,
-    showYGrid:!!sm.showYGrid,
-    qList:Array.isArray(sm.qList)? sm.qList.map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8):[],
-    cursor:(Number.isInteger(sm.cursor)&&sm.cursor>=0)? sm.cursor:null,
-    steps:[],
-  };
-  if (Array.isArray(sm.steps)) for (const t of sm.steps.slice(0,64)){
-    if (!t || !['start','series','shunt','line','renorm'].includes(t.kind)) continue;
-    out.steps.push({
-      kind:t.kind, q:t.q==='y'?'y':'z', norm:t.norm!==false,
-      value: typeof t.value==='string'? t.value.slice(0,40):'',
-      z0line:(isFinite(t.z0line)&&t.z0line>0)?+t.z0line:50,
-      eleDeg:isFinite(t.eleDeg)?+t.eleDeg:45,
-      swr:!!t.swr,
-      z0new:(isFinite(t.z0new)&&t.z0new>0)?+t.z0new:50,
-      color:/^#[0-9a-fA-F]{6}$/.test(t.color)? t.color:'#e11d48',
-      op:(isFinite(t.op)&&t.op>0&&t.op<=1)?+t.op:1,
-      hide:!!t.hide, hl:!!t.hl,
-    });
-  }
-  if (out.cursor!=null) out.cursor=Math.min(out.cursor, Math.max(0,out.steps.length-1));
-  return out;
-}
+const sanSmith=SNP.sanSmith;
 let tabCounter=0;
 function newTab(name, src){
   return {
@@ -1613,13 +1649,19 @@ function renderSmith(W,H,trs,unit){
   const cx0=m.l+w/2, cy0=m.t+h/2;
   const sc=(side/2)/sv.r;
   const gx=re=>cx0+(re-sv.cx)*sc, gy=im=>cy0-(im-sv.cy)*sc;
-  // design chain: solve to find the chart Z0 in effect at the slideshow cursor
+  // design chains (bundles): every chain solves independently; the chart Z0 in
+  // effect follows the ACTIVE chain's slideshow cursor (its renorm steps)
   const sm=curTab().smith;
-  const solve=SNP.smithSolve(sm.steps, sm.z0);
-  const lim= sm.cursor==null? solve.length-1 : Math.min(sm.cursor, solve.length-1);
+  const chains=sm.chains;
+  const solves=chains.map(ch=>SNP.smithSolve(ch.steps, sm.z0));
+  const chLim=(ch,ci)=> ch.cursor==null? solves[ci].length-1 : Math.min(ch.cursor, solves[ci].length-1);
+  const ai=Math.min(sm.active, chains.length-1);
   let z0c=sm.z0;
-  for (let i=0;i<=lim;i++) if (solve[i]) z0c=solve[i].z0After;
-  P={ mode:'smith', l:m.l, t:m.t, w, h, cx0, cy0, sc, gx, gy, trs, unit, z0c, solve, lim,
+  if (chains[ai]){
+    const sv=solves[ai], lim=chLim(chains[ai], ai);
+    for (let i=0;i<=lim;i++) if (sv[i]) z0c=sv[i].z0After;
+  }
+  P={ mode:'smith', l:m.l, t:m.t, w, h, cx0, cy0, sc, gx, gy, trs, unit, z0c, chains, solves,
       segs: trs.map(t=>({ t, seg:smithSamples(t, z0c) })) };
 
   const cr=$('clipRect');
@@ -1719,8 +1761,11 @@ function renderSmith(W,H,trs,unit){
     }
     return d;
   };
-  solve.forEach((rec,i)=>{
-    const st=sm.steps[i];
+  chains.forEach((ch,ci)=>{
+  if (ch.hide) return;
+  const sv=solves[ci], lim=chLim(ch,ci);
+  sv.forEach((rec,i)=>{
+    const st=ch.steps[i];
     if (!st || i>lim || st.hide || !rec.ok) return;
     const col=st.color, op=st.op, wd= st.hl? 3.6 : 2.2;
     if (rec.circleAbs && st.swr)
@@ -1733,6 +1778,7 @@ function renderSmith(W,H,trs,unit){
         dg+='<circle cx="'+q[0].toFixed(2)+'" cy="'+q[1].toFixed(2)+'" r="'+(st.hl?5:4)+'" fill="'+col+'" opacity="'+op+'" stroke="'+chrome().dot+'" stroke-width="1.3"/>'
           +'<text x="'+(q[0]+7).toFixed(2)+'" y="'+(q[1]-6).toFixed(2)+'" style="font-size:10px" fill="'+col+'" opacity="'+op+'">'+(i+1)+'</text>';
     }
+  });
   });
   $('designG').innerHTML=dg;
 }
@@ -3016,7 +3062,7 @@ function sessionHasContent(){
   // a Smith design chain (or markers, extra tabs) is user work even with NO files loaded
   return state.files.length>0
     || state.tabs.length>1
-    || state.tabs.some(t=> (t.smith && (t.smith.steps.length || t.smith.qList.length)) || t.markers.length>0);
+    || state.tabs.some(t=> (t.smith && (t.smith.chains.some(c=>c.steps.length) || t.smith.qList.length)) || t.markers.length>0);
 }
 function autosaveNow(){
   if (!autosaveEnabled) return;
@@ -3070,9 +3116,15 @@ function renderSmithPanel(){
   $('smZ0').value=sm.z0;
   $('smYGrid').checked=sm.showYGrid;
   $('smQ').value=sm.qList.join(', ');
-  const solve=SNP.smithSolve(sm.steps, sm.z0);
-  const lim= sm.cursor==null? sm.steps.length-1 : sm.cursor;
-  $('smSteps').innerHTML= sm.steps.map((st,i)=>{
+  sm.active=Math.min(sm.active, sm.chains.length-1);
+  const act=sm.chains[sm.active];
+  $('smChain').innerHTML=sm.chains.map((ch,i)=>
+    '<option value="'+i+'"'+(i===sm.active?' selected':'')+'>'+(ch.hide?'∅ ':'')+esc(ch.name)+'</option>').join('');
+  $('smChainName').value=act.name;
+  $('smChainEye').classList.toggle('on', !act.hide);
+  const solve=SNP.smithSolve(act.steps, sm.z0);
+  const lim= act.cursor==null? act.steps.length-1 : act.cursor;
+  $('smSteps').innerHTML= act.steps.map((st,i)=>{
     const rec=solve[i]||{};
     const err= rec.ok===false? '<button class="sbtn warn" title="'+esc(rec.err||'error')+'">⚠</button>' : '';
     let mid='';
@@ -3100,7 +3152,7 @@ function renderSmithPanel(){
       +'<button class="sbtn" data-sdel="'+i+'" title="delete this step">✕</button>'
       +zEnd+'</div>';
   }).join('') || '<div class="empty">Add a start point, then series/shunt elements, line sections or a renormalization.</div>';
-  $('ssPos').textContent= sm.steps.length? ((sm.cursor==null?'all':(sm.cursor+1))+' / '+sm.steps.length) : '—';
+  $('ssPos').textContent= act.steps.length? ((act.cursor==null?'all':(act.cursor+1))+' / '+act.steps.length) : '—';
   const sweepKeys=(inp, commit)=>{
     inp.addEventListener('keydown',ev=>{
       if (ev.key!=='ArrowUp' && ev.key!=='ArrowDown') return;
@@ -3116,7 +3168,7 @@ function renderSmithPanel(){
     });
   };
   $('smSteps').querySelectorAll('[data-srow]').forEach(row=>{
-    const st=sm.steps[+row.dataset.srow];
+    const st=act.steps[+row.dataset.srow];
     if (!st) return;
     row.querySelectorAll('[data-sf]').forEach(inp=>{
       const sf=inp.dataset.sf;
@@ -3140,12 +3192,48 @@ function renderSmithPanel(){
   });
   $('smSteps').querySelectorAll('[data-sdel]').forEach(b=>{
     b.onclick=()=>{
-      sm.steps.splice(+b.dataset.sdel,1);
-      if (sm.cursor!=null) sm.cursor= sm.steps.length? Math.min(sm.cursor, sm.steps.length-1) : null;
+      act.steps.splice(+b.dataset.sdel,1);
+      if (act.cursor!=null) act.cursor= act.steps.length? Math.min(act.cursor, act.steps.length-1) : null;
       renderAll();
     };
   });
 }
+function activeChain(){
+  const sm=state.smith;
+  sm.active=Math.min(sm.active, sm.chains.length-1);
+  return sm.chains[sm.active];
+}
+$('smChain').addEventListener('change',()=>{ state.smith.active=+$('smChain').value||0; renderAll(); });
+$('smChainName').addEventListener('change',()=>{
+  const v=$('smChainName').value.trim();
+  if (v) activeChain().name=v.slice(0,24);
+  renderAll();
+});
+$('smChainAdd').onclick=()=>{
+  const sm=state.smith;
+  if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
+  sm.chains.push({ name:'list '+(sm.chains.length+1), hide:false, cursor:null, steps:[] });
+  sm.active=sm.chains.length-1;
+  renderAll();
+};
+$('smChainDup').onclick=()=>{
+  const sm=state.smith;
+  if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
+  const src=activeChain();
+  const copy=sanSmith({ chains:[src] }).chains[0];
+  copy.name=(src.name+' copy').slice(0,24);
+  sm.chains.splice(sm.active+1, 0, copy);
+  sm.active=sm.active+1;
+  renderAll();
+};
+$('smChainEye').onclick=()=>{ const ch=activeChain(); ch.hide=!ch.hide; renderAll(); };
+$('smChainDel').onclick=()=>{
+  const sm=state.smith;
+  sm.chains.splice(sm.active,1);
+  if (!sm.chains.length) sm.chains.push({ name:'list 1', hide:false, cursor:null, steps:[] });
+  sm.active=Math.max(0, Math.min(sm.active, sm.chains.length-1));
+  renderAll();
+};
 $('smZ0').addEventListener('change',()=>{
   const v=parseFloat($('smZ0').value);
   if (v>0 && isFinite(v)) state.smith.z0=v;
@@ -3172,32 +3260,33 @@ $('smQ').addEventListener('change',()=>{
 document.querySelectorAll('[data-sadd]').forEach(b=>{
   b.onclick=()=>{
     const kind=b.dataset.sadd, sm=state.smith;
-    if (sm.steps.length>=64){ toast('the design chain is capped at 64 steps', false); return; }
-    sm.steps.push(sanSmith({ steps:[{
+    const ch=sm.chains[Math.min(sm.active, sm.chains.length-1)];
+    if (ch.steps.length>=64){ toast('a design list is capped at 64 steps', false); return; }
+    ch.steps.push(sanSmith({ steps:[{
       kind, q: kind==='shunt'?'y':'z', norm:true,
       value: kind==='start'? '1+j0' : 'j1',
       z0line:50, eleDeg:45, swr:kind==='line', z0new:50,
-      color:EXTRA_COLORS[sm.steps.length%EXTRA_COLORS.length], op:1,
-    }] }).steps[0]);
-    if (sm.cursor!=null) sm.cursor=sm.steps.length-1;   // slideshow advances to the new step
+      color:EXTRA_COLORS[(ch.steps.length + sm.active*5)%EXTRA_COLORS.length], op:1,
+    }] }).chains[0].steps[0]);
+    if (ch.cursor!=null) ch.cursor=ch.steps.length-1;   // slideshow advances to the new step
     renderAll();
   };
 });
-$('ssFirst').onclick=()=>{ if (state.smith.steps.length){ state.smith.cursor=0; renderAll(); } };
+$('ssFirst').onclick=()=>{ const ch=activeChain(); if (ch.steps.length){ ch.cursor=0; renderAll(); } };
 $('ssPrev').onclick=()=>{
-  const sm=state.smith;
-  if (!sm.steps.length) return;
-  const cur= sm.cursor==null? sm.steps.length-1 : sm.cursor;
-  sm.cursor=Math.max(0, cur-1);
+  const ch=activeChain();
+  if (!ch.steps.length) return;
+  const cur= ch.cursor==null? ch.steps.length-1 : ch.cursor;
+  ch.cursor=Math.max(0, cur-1);
   renderAll();
 };
 $('ssNext').onclick=()=>{
-  const sm=state.smith;
-  if (sm.cursor==null) return;
-  sm.cursor= sm.cursor>=sm.steps.length-1? null : sm.cursor+1;
+  const ch=activeChain();
+  if (ch.cursor==null) return;
+  ch.cursor= ch.cursor>=ch.steps.length-1? null : ch.cursor+1;
   renderAll();
 };
-$('ssAll').onclick=()=>{ state.smith.cursor=null; renderAll(); };
+$('ssAll').onclick=()=>{ activeChain().cursor=null; renderAll(); };
 
 // ---------- render all ----------
 function renderAll(){

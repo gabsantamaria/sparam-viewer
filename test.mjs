@@ -723,5 +723,35 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   check('15 presses at the tenths place: 1.00 -> 2.50', st.value === '2.50', st.value);
 }
 
+// ---------- 34. design bundles: sanitizer + legacy migration ----------
+{
+  const SS = SNP.sanSmith;
+  // legacy single-chain shape migrates losslessly into chains[0]
+  const leg = SS({ z0: 75, showYGrid: true, qList: [2], cursor: 1,
+    steps: [{ kind: 'start', value: '1+j2' }, { kind: 'series', value: 'j1', color: '#123abc' }] });
+  check('legacy migrates to chains[0]', leg.chains.length === 1 && leg.chains[0].steps.length === 2
+    && leg.chains[0].cursor === 1 && leg.chains[0].steps[0].value === '1+j2'
+    && leg.chains[0].steps[1].color === '#123abc' && leg.z0 === 75 && leg.qList[0] === 2);
+  // chains shape round-trips through its own sanitizer (persistence path)
+  const multi = SS({ chains: [
+    { name: 'match A', steps: [{ kind: 'start', value: '1' }], cursor: 0 },
+    { name: 'match B', hide: true, steps: [{ kind: 'start', value: '2' }, { kind: 'line' }], cursor: 5 },
+  ], active: 1 });
+  check('chains round-trip with names/hide/active', multi.chains.length === 2
+    && multi.chains[0].name === 'match A' && multi.chains[1].hide === true && multi.active === 1);
+  check('per-chain cursor clamps to its own length', multi.chains[1].cursor === 1);
+  const again = SS(multi);
+  check('sanitizer idempotent on chains', JSON.stringify(again) === JSON.stringify(multi));
+  // caps: 16 chains, 64 steps each
+  const big = SS({ chains: Array.from({ length: 25 }, (_, i) => ({ name: 'c' + i, steps: [] })) });
+  check('chain count capped at 16', big.chains.length === 16);
+  const deep = SS({ chains: [{ steps: Array.from({ length: 99 }, () => ({ kind: 'start', value: '1' })) }] });
+  check('steps per chain capped at 64', deep.chains[0].steps.length === 64);
+  // empty input -> one empty chain, never zero
+  const e = SS(null);
+  check('empty config yields one empty chain', e.chains.length === 1 && e.chains[0].steps.length === 0 && e.chains[0].cursor === null);
+  check('active clamps into range', SS({ chains: [{ steps: [] }], active: 9 }).active === 0);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);
