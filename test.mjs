@@ -554,5 +554,132 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   check('grid families complete', g.circles.length === 5 && g.arcs.length === 10);
 }
 
+// ---------- 29. complex parser ----------
+{
+  const P = SNP.parseComplex;
+  check('cx: 1+j2', JSON.stringify(P('1+j2')) === '{"re":1,"im":2}');
+  check('cx: 1 - j 0.5 (spaces)', JSON.stringify(P('1 - j 0.5')) === '{"re":1,"im":-0.5}');
+  check('cx: bare j / -j', P('j').im === 1 && P('-j').im === -1 && P('j').re === 0);
+  check('cx: trailing j form 2-3j', JSON.stringify(P('2-3j')) === '{"re":2,"im":-3}');
+  check('cx: pure real 25', JSON.stringify(P('25')) === '{"re":25,"im":0}');
+  check('cx: exponents .5e1+j.25', P('.5e1+j.25').re === 5 && P('.5e1+j.25').im === 0.25);
+  check('cx: i accepted as j', P('1+i2').im === 2);
+  check('cx: rejects garbage', P('abc') === null && P('') === null && P('1+2') === null && P('j1j2') === null && P('1+j2+3') === null);
+}
+// ---------- 30. smith design engine: physics ----------
+{
+  const S = (steps, z0) => SNP.smithSolve(steps, z0 ?? 50);
+  const st = (o) => ({ q: 'z', norm: true, value: '', z0line: 50, eleDeg: 0, swr: false, z0new: 50, ...o });
+
+  // normalized start 1+j2 @ 50 ohm -> 50+j100 absolute
+  let r = S([st({ kind: 'start', value: '1+j2' })]);
+  check('start: z=1+j2 norm@50 -> 50+j100 abs', r[0].ok && approx(r[0].zAbs.re, 50, 1e-12) && approx(r[0].zAbs.im, 100, 1e-12));
+  // absolute entry
+  r = S([st({ kind: 'start', value: '25-j10', norm: false })]);
+  check('start: absolute 25-j10', r[0].zAbs.re === 25 && r[0].zAbs.im === -10);
+  // admittance start: y=0.5 norm -> Y=0.01 S -> Z=100
+  r = S([st({ kind: 'start', q: 'y', value: '0.5' })]);
+  check('start via Y: y=0.5 norm -> 100 ohm', approx(r[0].zAbs.re, 100, 1e-12) && approx(r[0].zAbs.im, 0, 1e-12));
+
+  // series pure reactance: r constant along the WHOLE path (constant-resistance circle)
+  r = S([st({ kind: 'start', value: '0.5+j0' }), st({ kind: 'series', value: 'j2' })]);
+  let rOk = r[1].ok && r[1].pathAbs.length > 90;
+  for (const p of r[1].pathAbs) if (!approx(p[0], 25, 1e-9)) rOk = false;   // Re(Z)=25 ohm everywhere
+  check('series jX: path holds constant resistance', rOk);
+  check('series jX: endpoint 25+j100', approx(r[1].zAbs.im, 100, 1e-12));
+
+  // shunt pure susceptance: conductance constant along the path (constant-G circle)
+  r = S([st({ kind: 'start', value: '1+j0' }), st({ kind: 'shunt', q: 'y', value: 'j1' })]);
+  let gOk = r[1].ok;
+  for (const p of r[1].pathAbs) {
+    const d = p[0] * p[0] + p[1] * p[1];
+    if (!approx(p[0] / d, 1 / 50, 1e-9)) gOk = false;     // Re(Y)=1/50 S everywhere
+  }
+  check('shunt jB: path holds constant conductance', gOk);
+  check('shunt jB endpoint: z = 1/(1+j1) norm = 25-j25 abs', approx(r[1].zAbs.re, 25, 1e-9) && approx(r[1].zAbs.im, -25, 1e-9));
+
+  // quarter-wave same-Z0 line inverts the normalized impedance: zL=2 -> zin=0.5
+  r = S([st({ kind: 'start', value: '2' }), st({ kind: 'line', z0line: 50, eleDeg: 90 })]);
+  check('lambda/4 line inverts: 100 ohm -> 25 ohm', r[1].ok && approx(r[1].zAbs.re, 25, 1e-9) && approx(r[1].zAbs.im, 0, 1e-9));
+
+  // classic quarter-wave transformer: 100 ohm through Z0=sqrt(50*100) -> 50 ohm
+  r = S([st({ kind: 'start', value: '100', norm: false }), st({ kind: 'line', z0line: Math.sqrt(5000), eleDeg: 90 })]);
+  check('QW transformer 100 -> 50 via 70.71', approx(r[1].zAbs.re, 50, 1e-9) && approx(r[1].zAbs.im, 0, 1e-9));
+
+  // the line path is constant |gamma| in ITS OWN frame (constant SWR), and the
+  // full SWR circle closes on itself
+  r = S([st({ kind: 'start', value: '2+j1' }), st({ kind: 'line', z0line: 75, eleDeg: 130, swr: true })]);
+  const gOfLine = (p) => { const d = (p[0] + 75) * (p[0] + 75) + p[1] * p[1]; return Math.hypot((p[0] - 75) * (p[0] + 75) + p[1] * p[1], p[1] * (p[0] + 75) - p[1] * (p[0] - 75)) / d; };
+  const mags = r[1].pathAbs.map(gOfLine);
+  check('line path: |gamma| constant in the line frame', r[1].ok && mags.every(m => approx(m, mags[0], 1e-9)));
+  const c0 = r[1].circleAbs[0], cN = r[1].circleAbs[r[1].circleAbs.length - 1];
+  check('SWR circle closes', Math.hypot(c0[0] - cN[0], c0[1] - cN[1]) < 1e-6);
+
+  // renormalization: z0After changes, and NORMALIZED entries after it use the new z0
+  r = S([st({ kind: 'start', value: '1' }), st({ kind: 'renorm', z0new: 100 }), st({ kind: 'series', value: 'j1' })]);
+  check('renorm: z0After propagates', r[1].z0After === 100 && r[2].z0After === 100);
+  check('renorm: later norm entries use the NEW z0 (j1 -> +j100 ohm)', approx(r[2].zAbs.im, 100, 1e-12));
+
+  // error paths are named, never silent
+  r = S([st({ kind: 'series', value: 'j1' })]);
+  check('series before start refused', !r[0].ok && /start point/.test(r[0].err));
+  r = S([st({ kind: 'start', value: '???' })]);
+  check('bad value named in the error', !r[0].ok && /cannot read/.test(r[0].err));
+  r = S([st({ kind: 'start', value: '0+j1' }), st({ kind: 'shunt', q: 'y', value: 'j1' })]);   // z=j -> y=-j; +j1 cancels
+  check('shunt cancelling to an open is refused loudly', !r[1].ok && /open/.test(r[1].err));
+}
+// ---------- 31. renormalization map + Y grid + Q circles ----------
+{
+  const g = SNP.remapGamma(0, 0, 50, 100);            // 50 ohm point on a 100 ohm chart
+  check('remap: 50-ohm match on 100-ohm chart -> -1/3', approx(g.re, -1 / 3, 1e-12) && approx(g.im, 0, 1e-12));
+  const rt = SNP.remapGamma(g.re, g.im, 100, 50);
+  check('remap round-trip is exact', approx(rt.re, 0, 1e-12) && approx(rt.im, 0, 1e-12));
+  check('remap identity when z0 equal', SNP.remapGamma(0.3, -0.2, 50, 50).re === 0.3);
+
+  const yg = SNP.smithYGridGeometry();
+  const g1 = yg.circles.find(c => c.v === 1);
+  check('Y grid: g=1 circle mirrored to (-0.5,0)', g1.cx === -0.5 && g1.rad === 0.5);
+  const b1 = yg.arcs.find(a => a.v === 1);
+  check('Y grid: b=+1 arc at (-1,-1)', b1 && b1.cx === -1 && b1.cy === -1);
+
+  // Q circles: z=1+j1 lies on Q=1; z=2+j4 lies on Q=2 (checked in the gamma plane)
+  const onQ = (zre, zim, Q) => {
+    const G = SNP.gammaOfZ(zre * 50, zim * 50, 50);
+    const qs = SNP.qCircleGeometry(Q);
+    return qs.some(c => approx(Math.hypot(G.re - c.cx, G.im - c.cy), c.rad, 1e-9));
+  };
+  check('Q=1 circle passes z=1+j1', onQ(1, 1, 1));
+  check('Q=2 circle passes z=2+j4', onQ(2, 4, 2));
+  check('Q circles pass (+-1, 0)', (() => { const c = SNP.qCircleGeometry(3)[0]; return approx(Math.hypot(1 - c.cx, 0 - c.cy), c.rad, 1e-12); })());
+}
+
+// ---------- 32. review-hardening regressions ----------
+{
+  const P = SNP.parseComplex;
+  check('cx: glued 2j3 rejected (was j23)', P('2j3') === null && P('0.5j2') === null);
+  check('cx: "1 2" rejected (was 12)', P('1 2') === null);
+  check('cx: unsigned second term rejected', P('5 j2') === null && P('1 j2') === null);
+  check('cx: legit spaced/trailing forms still parse', P('1 - j 0.5').im === -0.5 && P('1+2j').im === 2 && P('2j').im === 2);
+
+  const st = (o) => ({ q: 'z', norm: true, value: '', z0line: 50, eleDeg: 0, swr: false, z0new: 50, ...o });
+  // a failed step BLOCKS later transforms (the error message is now true)…
+  let r = SNP.smithSolve([st({ kind: 'start', value: '1' }), st({ kind: 'shunt', value: '0' }),
+                          st({ kind: 'series', value: 'j1' })], 50);
+  check('failed step blocks the chain', !r[1].ok && !r[2].ok && /blocked by failed step 2/.test(r[2].err));
+  // …and a fresh start point re-roots it
+  r = SNP.smithSolve([st({ kind: 'start', value: '1' }), st({ kind: 'shunt', value: '0' }),
+                      st({ kind: 'start', value: '2' }), st({ kind: 'series', value: 'j1' })], 50);
+  check('a new start point re-roots after a failure', r[2].ok && r[3].ok && approx(r[3].zAbs.im, 50, 1e-12));
+
+  // multi-revolution line: samples scale with electrical length
+  r = SNP.smithSolve([st({ kind: 'start', value: '2+j1' }), st({ kind: 'line', z0line: 50, eleDeg: 720 })], 50);
+  check('720-degree line is densely sampled', r[1].ok && r[1].pathAbs.length > 1000, r[1].pathAbs && String(r[1].pathAbs.length));
+  check('720-degree line returns to start (2 full revolutions)',
+    approx(r[1].zAbs.re, 100, 1e-9) && approx(r[1].zAbs.im, 50, 1e-9));
+
+  // the Z = -z0 pole is a null, never the open point
+  check('gammaOfZ null at Z=-z0 (not Γ=+1)', SNP.gammaOfZ(-50, 0, 50) === null);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);

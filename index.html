@@ -194,6 +194,25 @@
     border-radius:6px; cursor:pointer; padding:2px 9px; font:inherit;
   }
   #tabbar .taddbtn:hover{ color:var(--ink); border-color:#2c4266; }
+  .smithrow{ display:flex; gap:8px; align-items:center; margin-bottom:5px; flex-wrap:wrap; font-size:12px; color:var(--ink2); }
+  .steprow{
+    display:flex; gap:4px; align-items:center; padding:3px 5px; border:1px solid var(--line2);
+    border-radius:6px; margin-bottom:4px; background:var(--panel2); flex-wrap:wrap; font-size:12px;
+  }
+  .steprow.dim{ opacity:.35; }
+  .steprow .k{ color:var(--ink3); min-width:1.1em; text-align:right; }
+  .steprow .kind{ min-width:3.4em; color:var(--ink); }
+  .steprow input[type=text]{ width:5.5em; }
+  .steprow input[type=number]{ width:4.2em; }
+  .steprow input[type=color]{ width:24px; height:20px; padding:0; border:none; background:none; cursor:pointer; }
+  .steprow .op{ width:3.6em; }
+  .steprow .zout{ color:var(--ink3); font-size:11px; }
+  .sbtn{
+    background:none; border:1px solid var(--line); border-radius:4px; color:var(--ink3);
+    cursor:pointer; font:inherit; font-size:11px; padding:1px 5px;
+  }
+  .sbtn.on{ color:#fff; background:#1d4ed8; border-color:#3b82f6; }
+  .sbtn.warn{ color:#f59e0b; border-color:#7c5803; }
   svg text{ font:11px "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace; fill:var(--ink2); }
   svg .axislabel{ font-size:12px; fill:var(--ink2); }
   svg .legendtext{ font-size:11.5px; fill:var(--ink); }
@@ -288,6 +307,30 @@
       <button class="btn ghost" id="resetViewBtn">reset view</button>
     </div>
 
+    <div id="smithSec" style="display:none">
+    <h2>Smith design <span class="rule"></span></h2>
+    <div class="smithrow">
+      <label class="inline">chart Z₀ <input type="number" id="smZ0" min="0.1" step="1" style="width:4.6em"> Ω</label>
+      <label class="inline"><input type="checkbox" id="smYGrid"> Y grid</label>
+      <label class="inline">Q <input type="text" id="smQ" placeholder="1, 2" style="width:4.5em" title="constant-Q circles, comma-separated"></label>
+    </div>
+    <div class="smithrow" style="color:var(--ink3)">trace freq window = the X range fields above</div>
+    <div id="smSteps"></div>
+    <div class="quickbtns">
+      <button class="btn ghost" data-sadd="start" title="an impedance/admittance point">+ point</button>
+      <button class="btn ghost" data-sadd="series" title="series impedance from the last point">+ series</button>
+      <button class="btn ghost" data-sadd="shunt" title="shunt admittance from the last point">+ shunt</button>
+      <button class="btn ghost" data-sadd="line" title="transmission-line section (Z0, electrical length)">+ line</button>
+      <button class="btn ghost" data-sadd="renorm" title="renormalize the chart to another Z0 from this step on">+ renorm</button>
+    </div>
+    <div class="smithrow">
+      <button class="btn ghost mini" id="ssFirst" title="first step only">⏮</button>
+      <button class="btn ghost mini" id="ssPrev" title="one step back">◀</button>
+      <span id="ssPos" style="min-width:3.5em;text-align:center"></span>
+      <button class="btn ghost mini" id="ssNext" title="one step forward">▶</button>
+      <button class="btn ghost mini" id="ssAll" title="show every step">all</button>
+    </div>
+    </div>
     <h2>Markers <span class="rule"></span></h2>
     <div id="markerList"><div class="empty">Click on a trace to pin a marker.</div></div>
   </aside>
@@ -304,6 +347,7 @@
       <g id="gridG"></g>
       <g id="axesG"></g>
       <g id="pathsG" clip-path="url(#clip)"></g>
+      <g id="designG" clip-path="url(#clip)" pointer-events="none"></g>
       <g id="markersG"></g>
       <g id="hoverG"></g>
       <rect id="bandRect" fill="rgba(59,130,246,.13)" stroke="#3b82f6" stroke-width="1" visibility="hidden"/>
@@ -623,6 +667,171 @@ const SNP = (function(){
     return { re:(x*x-1)/d, im:2*x/d };
   }
 
+  // ---- Smith design engine (the "coloring book") -------------------------
+  function cxAdd(a,b){ return { re:a.re+b.re, im:a.im+b.im }; }
+  function cxSub(a,b){ return { re:a.re-b.re, im:a.im-b.im }; }
+  function cxDiv(a,b){
+    const d=b.re*b.re+b.im*b.im;
+    if (d<1e-30) return null;
+    return { re:(a.re*b.re+a.im*b.im)/d, im:(a.im*b.re-a.re*b.im)/d };
+  }
+  function cxInv(a){ return cxDiv({re:1,im:0}, a); }
+
+  // "1+j2", "-j0.5", "j", "25", "1-2j", "0.5e1+j.3" -> {re,im}; null on nonsense
+  function parseComplex(str){
+    if (typeof str!=='string') return null;
+    if (/[\d.]\s+[\d.]/.test(str)) return null;           // '1 2' must not read as 12
+    let s=str.trim().replace(/\s+/g,'').replace(/\u2212/g,'-').replace(/i/gi,'j');
+    if (!s) return null;
+    s=s.replace(/((?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)j(?![\d.])/g,'j$1');   // 2j -> j2, but never inside '2j3' 
+    const NUM='(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?';
+    const rx=new RegExp('([+-]?)(?:j('+NUM+')?|('+NUM+'))','y');
+    let re=0, im=0, i=0, terms=0, reSeen=false, imSeen=false;
+    while (i<s.length){
+      rx.lastIndex=i;
+      const m=rx.exec(s);
+      if (!m || m[0]==='') return null;
+      if (terms>0 && m[1]===''){ return null; }             // a second term needs an explicit sign
+      const sign= m[1]==='-'? -1 : 1;
+      if (m[3]!==undefined){ if (reSeen) return null; re=sign*parseFloat(m[3]); reSeen=true; }
+      else { if (imSeen) return null; im=sign*(m[2]===undefined? 1 : parseFloat(m[2])); imSeen=true; }
+      i=rx.lastIndex; terms++;
+      if (terms>2) return null;
+    }
+    return terms? { re, im } : null;
+  }
+
+  function gammaOfZ(re, im, z0){
+    return cxDiv({ re:re-z0, im }, { re:re+z0, im });   // null at the Z = -z0 pole; callers skip
+  }
+  // exact Mobius: gamma in the z0from frame -> the SAME absolute impedance in the z0to frame
+  function remapGamma(re, im, z0from, z0to){
+    if (!(z0from>0) || !(z0to>0) || z0from===z0to) return { re, im };
+    const zr=cxDiv({ re:1+re, im }, { re:1-re, im:-im });
+    if (!zr) return { re:1, im:0 };
+    return gammaOfZ(zr.re*z0from, zr.im*z0from, z0to);
+  }
+
+  // admittance grid = the impedance grid point-reflected through the origin
+  // (gamma(1/z) = -gamma(z))
+  function smithYGridGeometry(){
+    const g=smithGridGeometry();
+    return {
+      circles: g.circles.map(c=>({ kind:'g', v:c.v, cx:-c.cx, cy:0, rad:c.rad })),
+      // gamma(1/z) = -gamma(z), and y(1/z) = z: the x=+1 arc mirrors to the b=+1
+      // curve (SAME sign — Im(y') = Im(z)), through (0,-1) with center (-1,-1)
+      arcs:    g.arcs.map(a=>({ kind:'b', v:a.v, cx:-a.cx, cy:-a.cy, rad:a.rad })),
+    };
+  }
+  // constant |x|/r = Q: two circles through (+-1, 0), centers (0, -+1/Q)
+  // (derivation: x = Q r  =>  u^2 + v^2 + (2/Q) v - 1 = 0 for the x>0 branch)
+  function qCircleGeometry(Q){
+    if (!(Q>0) || !isFinite(Q)) return null;
+    const rad=Math.sqrt(1+1/(Q*Q));
+    return [ { cx:0, cy:-1/Q, rad }, { cx:0, cy:1/Q, rad } ];
+  }
+
+  // step chain -> ABSOLUTE-impedance points and paths (render maps them with the
+  // chart z0 in effect, so a later renormalization re-maps everything shown).
+  // steps: {kind:'start'|'series'|'shunt'|'line'|'renorm', q:'z'|'y', norm:bool,
+  //         value:str, z0line, eleDeg, swr:bool, z0new}
+  function smithSolve(steps, z0Default){
+    const out=[];
+    let Z=null;
+    let z0=(z0Default>0 && isFinite(z0Default))? z0Default : 50;
+    const SAMP=96, BIG=1e12;
+    const finiteZ=z=> z && isFinite(z.re) && isFinite(z.im) && Math.hypot(z.re,z.im)<BIG;
+    const zPath=(f,n)=>{
+      n=n||SAMP;
+      const a=[];
+      for (let k=0;k<=n;k++){ const z=f(k/n); if (finiteZ(z)) a.push([z.re,z.im]); }
+      return a;
+    };
+    let blockedBy=null;   // a failed transform blocks later ones (a new start re-roots)
+    for (let i=0;i<(steps||[]).length;i++){
+      const st=steps[i];
+      const rec={ idx:i, kind:st.kind, ok:true, zAbs:null, pathAbs:null, z0After:z0 };
+      const fail=msg=>{ rec.ok=false; rec.err=msg; rec.z0After=z0;
+        if (st.kind!=='renorm' && blockedBy==null) blockedBy=i;
+        out.push(rec); };
+      if (blockedBy!=null && (st.kind==='series'||st.kind==='shunt'||st.kind==='line')){
+        rec.ok=false; rec.err='blocked by failed step '+(blockedBy+1)+' — fix or remove it first';
+        rec.z0After=z0; out.push(rec); continue;
+      }
+      if (st.kind==='start') blockedBy=null;
+      if (st.kind==='renorm'){
+        const n=+st.z0new;
+        if (!(n>0 && isFinite(n))){ fail('renormalization Z0 must be a positive number of ohms'); continue; }
+        z0=n; rec.z0After=z0; rec.zAbs= Z? {...Z} : null;
+        out.push(rec); continue;
+      }
+      if (st.kind==='line'){
+        if (!Z){ fail('a line section needs a starting impedance — add a point first'); continue; }
+        const zl=+st.z0line, th=(+st.eleDeg)*Math.PI/180;
+        if (!(zl>0 && isFinite(zl)) || !isFinite(th)){ fail('a line needs Z0 > 0 and an electrical length'); continue; }
+        const G=cxDiv(cxSub(Z,{re:zl,im:0}), cxAdd(Z,{re:zl,im:0}));
+        if (!G){ fail('degenerate impedance for this line'); continue; }
+        const zOf=phi=>{   // toward the generator: gamma rotates by e^{-j 2 phi}
+          const c=Math.cos(-2*phi), sn=Math.sin(-2*phi);
+          const g={ re:G.re*c-G.im*sn, im:G.re*sn+G.im*c };
+          const zr=cxDiv({ re:1+g.re, im:g.im }, { re:1-g.re, im:-g.im });
+          return zr? { re:zr.re*zl, im:zr.im*zl } : null;
+        };
+        rec.pathAbs=zPath(t=>zOf(t*th), Math.min(4096, Math.max(96, Math.ceil(Math.abs(+st.eleDeg)*2))));
+        const Zend=zOf(th);
+        if (!finiteZ(Zend)){ fail('this length lands on an open circuit — nudge the electrical length'); continue; }
+        if (st.swr){
+          const gm=Math.hypot(G.re,G.im), ph0=Math.atan2(G.im,G.re), a=[];
+          for (let k=0;k<=128;k++){
+            const ph=ph0+k/128*2*Math.PI;
+            const g={ re:gm*Math.cos(ph), im:gm*Math.sin(ph) };
+            const zr=cxDiv({ re:1+g.re, im:g.im }, { re:1-g.re, im:-g.im });
+            if (zr && finiteZ({re:zr.re*zl, im:zr.im*zl})) a.push([zr.re*zl, zr.im*zl]);
+          }
+          rec.circleAbs=a;
+        }
+        Z=Zend; rec.zAbs={...Z}; rec.z0After=z0;
+        out.push(rec); continue;
+      }
+      // value steps: start / series / shunt
+      const v=parseComplex(st.value);
+      if (!v){ fail('cannot read "'+(st.value||'')+'" — use forms like 1+j2, -j0.5, 25'); continue; }
+      let Zval=null, Yadd=null;
+      if (st.q==='y'){
+        const Y= st.norm? { re:v.re/z0, im:v.im/z0 } : { re:v.re, im:v.im };
+        Yadd=Y; Zval=cxInv(Y);
+      } else {
+        Zval= st.norm? { re:v.re*z0, im:v.im*z0 } : { re:v.re, im:v.im };
+        Yadd=cxInv(Zval);
+      }
+      if (st.kind==='start'){
+        if (!finiteZ(Zval)){ fail('the start point resolves to an open — pick a finite impedance'); continue; }
+        Z={...Zval}; rec.zAbs={...Z}; rec.z0After=z0;
+        out.push(rec); continue;
+      }
+      if (!Z){ fail('add a start point first'); continue; }
+      if (st.kind==='series'){
+        if (!finiteZ(Zval)){ fail('a series element needs a finite impedance'); continue; }
+        const Zs={...Z};
+        rec.pathAbs=zPath(t=>({ re:Zs.re+t*Zval.re, im:Zs.im+t*Zval.im }));
+        Z=cxAdd(Zs,Zval); rec.zAbs={...Z};
+      } else {                                   // shunt
+        if (!Yadd){ fail('a 0 ohm shunt is a short to ground — the chain ends there'); continue; }
+        const Y0=cxInv(Z);
+        if (!Y0){ rec.pathAbs=[[Z.re,Z.im]]; rec.zAbs={...Z}; }   // shunting a short: stays a short
+        else {
+          rec.pathAbs=zPath(t=>cxInv({ re:Y0.re+t*Yadd.re, im:Y0.im+t*Yadd.im }));
+          const Zn=cxInv({ re:Y0.re+Yadd.re, im:Y0.im+Yadd.im });
+          if (!finiteZ(Zn)){ fail('this shunt cancels the admittance exactly — the result is an open'); continue; }
+          Z=Zn; rec.zAbs={...Z};
+        }
+      }
+      rec.z0After=z0;
+      out.push(rec);
+    }
+    return out;
+  }
+
   function fmtNum(v, sig){
     if (v==null || !isFinite(v)) return '—';
     if (v===0) return '0';
@@ -743,7 +952,8 @@ const SNP = (function(){
     return lines.join('\n')+'\n';
   }
 
-  return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint };
+  return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint,
+    parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve };
 })();
 if (typeof module!=='undefined' && module.exports) module.exports = SNP;
 //<<PURE_END>>
@@ -769,6 +979,32 @@ const FILE_DASHES=[
 const FORMAT_LABELS={ db:'|S| (dB)', mag:'|S| (linear)', deg:'Phase (°)', degU:'Phase, unwrapped (°)', re:'Re(S)', im:'Im(S)' };
 
 // files are SHARED; everything about how they are plotted lives on a TAB
+function sanSmith(sm){
+  sm=(sm&&typeof sm==='object')?sm:{};
+  const out={
+    z0:(isFinite(sm.z0)&&sm.z0>0)?+sm.z0:50,
+    showYGrid:!!sm.showYGrid,
+    qList:Array.isArray(sm.qList)? sm.qList.map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8):[],
+    cursor:(Number.isInteger(sm.cursor)&&sm.cursor>=0)? sm.cursor:null,
+    steps:[],
+  };
+  if (Array.isArray(sm.steps)) for (const t of sm.steps.slice(0,64)){
+    if (!t || !['start','series','shunt','line','renorm'].includes(t.kind)) continue;
+    out.steps.push({
+      kind:t.kind, q:t.q==='y'?'y':'z', norm:t.norm!==false,
+      value: typeof t.value==='string'? t.value.slice(0,40):'',
+      z0line:(isFinite(t.z0line)&&t.z0line>0)?+t.z0line:50,
+      eleDeg:isFinite(t.eleDeg)?+t.eleDeg:45,
+      swr:!!t.swr,
+      z0new:(isFinite(t.z0new)&&t.z0new>0)?+t.z0new:50,
+      color:/^#[0-9a-fA-F]{6}$/.test(t.color)? t.color:'#e11d48',
+      op:(isFinite(t.op)&&t.op>0&&t.op<=1)?+t.op:1,
+      hide:!!t.hide, hl:!!t.hl,
+    });
+  }
+  if (out.cursor!=null) out.cursor=Math.min(out.cursor, Math.max(0,out.steps.length-1));
+  return out;
+}
 let tabCounter=0;
 function newTab(name, src){
   return {
@@ -785,6 +1021,7 @@ function newTab(name, src){
     smithView: src?{...src.smithView}:{ cx:0, cy:0, r:1.15 },
     legendPos: (src&&src.legendPos)? {...src.legendPos} : null,  // {fx,fy} fractions of the plot rect; null = auto top-right
     plotSize: (src&&src.plotSize)? {...src.plotSize} : null,      // {w,h} px; null = fill the window
+    smith: sanSmith(src? src.smith:null),                         // chart z0, grids, Q circles, design steps
     markers: src? src.markers.map(m=>({...m})) : [],   // {id, fid, key, idx}
   };
 }
@@ -793,7 +1030,7 @@ state.tabs=[newTab('Plot 1')];
 state.activeTabId=state.tabs[0].id;
 function curTab(){ return state.tabs.find(t=>t.id===state.activeTabId) || state.tabs[0]; }
 // per-tab fields stay reachable as state.<field>, so every consumer below is tab-aware for free
-for (const k of ['sel','axisR','format','plotMode','plotTheme','grid','legend','view','smithView','markers','plotSize'])
+for (const k of ['sel','axisR','format','plotMode','plotTheme','grid','legend','view','smithView','markers','plotSize','smith'])
   Object.defineProperty(state, k, { get:()=>curTab()[k], set:v=>{ curTab()[k]=v; } });
 let fileCounter=0, dashCounter=0, markerCounter=0;
 // light (white-background) variants keep the SAME hue per (i,j), stepped darker
@@ -1119,8 +1356,10 @@ const M={ l:66, r:18, t:14, b:48 };
 // figure-surface chrome per plot theme (the legend/marker panels are part of the FIGURE,
 // unlike the tooltip, which is app UI and stays dark)
 const PLOT_CHROME={
-  dark:  { panel:'rgba(10,16,28,.88)',  panelStroke:'#2c4266', dot:'#0b1220', cross:'#5e7092' },
-  light: { panel:'rgba(255,255,255,.93)', panelStroke:'#cbd5e1', dot:'#ffffff', cross:'#94a3b8' },
+  dark:  { panel:'rgba(10,16,28,.88)',  panelStroke:'#2c4266', dot:'#0b1220', cross:'#5e7092',
+           gridY:'#1e3d35', gridYInk:'#4d9b7f', q:'#8b5cf6' },
+  light: { panel:'rgba(255,255,255,.93)', panelStroke:'#cbd5e1', dot:'#ffffff', cross:'#94a3b8',
+           gridY:'#cde9db', gridYInk:'#2f7d5c', q:'#7c3aed' },
 };
 function chrome(){ return PLOT_CHROME[state.plotTheme]||PLOT_CHROME.dark; }
 
@@ -1167,15 +1406,21 @@ const pxToYAx=(py,ax)=> ax==='R'
   : P.yL1 - (py-P.t)/P.h*(P.yL1-P.yL0);
 function axisOf(fid,key){ return state.axisR.has(fid+'|'+key)?'R':'L'; }
 // frequency-windowed raw complex samples of a trace (Smith mode; no interpolation)
-function smithSamples(t){
+function smithSamples(t, z0c){
   const S=t.f.parsed.S[t.key], fr=t.f.parsed.freqHz;
+  const z0f=t.f.parsed.z0;
+  const remap= z0c!=null && z0f>0 && z0c>0 && z0f!==z0c;
   const x0=state.view.xmin!=null?state.view.xmin:-Infinity;
   const x1=state.view.xmax!=null?state.view.xmax:Infinity;
   const re=[], im=[], idxs=[];
   for (let k=0;k<fr.length;k++){
     if (fr[k]<x0||fr[k]>x1) continue;
     if (!isFinite(S.re[k])||!isFinite(S.im[k])) continue;
-    re.push(S.re[k]); im.push(S.im[k]); idxs.push(k);
+    if (remap){
+      const g=SNP.remapGamma(S.re[k], S.im[k], z0f, z0c);   // exact Mobius, same absolute Z
+      re.push(g.re); im.push(g.im);
+    } else { re.push(S.re[k]); im.push(S.im[k]); }
+    idxs.push(k);
   }
   return { n:re.length, re, im, idxs };
 }
@@ -1297,6 +1542,7 @@ function renderXY(W,H,trs,unit){
       +(t.dash?' stroke-dasharray="'+t.dash+'"':'')+' stroke-linejoin="round" stroke-linecap="round"/>';
   }
   $('pathsG').innerHTML=ph;
+  $('designG').innerHTML='';
 }
 
 function renderSmith(W,H,trs,unit){
@@ -1307,8 +1553,14 @@ function renderSmith(W,H,trs,unit){
   const cx0=m.l+w/2, cy0=m.t+h/2;
   const sc=(side/2)/sv.r;
   const gx=re=>cx0+(re-sv.cx)*sc, gy=im=>cy0-(im-sv.cy)*sc;
-  P={ mode:'smith', l:m.l, t:m.t, w, h, cx0, cy0, sc, gx, gy, trs, unit,
-      segs: trs.map(t=>({ t, seg:smithSamples(t) })) };
+  // design chain: solve to find the chart Z0 in effect at the slideshow cursor
+  const sm=curTab().smith;
+  const solve=SNP.smithSolve(sm.steps, sm.z0);
+  const lim= sm.cursor==null? solve.length-1 : Math.min(sm.cursor, solve.length-1);
+  let z0c=sm.z0;
+  for (let i=0;i<=lim;i++) if (solve[i]) z0c=solve[i].z0After;
+  P={ mode:'smith', l:m.l, t:m.t, w, h, cx0, cy0, sc, gx, gy, trs, unit, z0c, solve, lim,
+      segs: trs.map(t=>({ t, seg:smithSamples(t, z0c) })) };
 
   const cr=$('clipRect');
   cr.setAttribute('x',P.l); cr.setAttribute('y',P.t);
@@ -1328,6 +1580,18 @@ function renderSmith(W,H,trs,unit){
     for (const c of geo.arcs)
       g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="var(--grid)" stroke-width="1"/>';
   }
+  if (sm.showYGrid){
+    const yg=SNP.smithYGridGeometry();
+    for (const c of yg.circles)
+      g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="'+chrome().gridY+'" stroke-width="1"/>';
+    for (const c of yg.arcs)
+      g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="'+chrome().gridY+'" stroke-width="1"/>';
+  }
+  for (const Q of sm.qList){
+    const qs=SNP.qCircleGeometry(Q);
+    if (qs) for (const c of qs)
+      g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="'+chrome().q+'" stroke-width="1" stroke-dasharray="4 4" opacity=".65"/>';
+  }
   $('gridG').innerHTML= g? '<g clip-path="url(#clipUnit)">'+g+'</g>' : '';
 
   const inPlot=(X,Y)=> X>P.l-2&&X<P.l+P.w+2&&Y>P.t-2&&Y<P.t+P.h+2;
@@ -1346,6 +1610,20 @@ function renderSmith(W,H,trs,unit){
       if (inPlot(X2,Y2)) a+='<text x="'+X2+'" y="'+(Y2+3)+'" text-anchor="middle" style="font-size:10px">-'+lab+'</text>';
     }
   }
+  if (sm.showYGrid){
+    for (const gv of [0.2,0.5,1,2,5]){
+      const X=gx((1-gv)/(1+gv)), Y=gy(0);
+      if (inPlot(X,Y)) a+='<text x="'+X+'" y="'+(Y-6)+'" text-anchor="middle" style="font-size:10px" fill="'+chrome().gridYInk+'">'+gv+'</text>';
+    }
+  }
+  for (const Q of sm.qList){
+    const vtop=-1/Q+Math.sqrt(1+1/(Q*Q));
+    const X=gx(0), Y=gy(vtop);
+    if (inPlot(X,Y)) a+='<text x="'+(X+4)+'" y="'+(Y-4)+'" style="font-size:10px" fill="'+chrome().q+'">Q='+Q+'</text>';
+  }
+  const remapAny=trs.some(t=>t.f.parsed.z0!==z0c);
+  a+='<text class="axislabel" x="'+(P.l+6)+'" y="'+(P.t+14)+'" text-anchor="start">Z₀ = '
+    +SNP.fmtNum(z0c,5)+' Ω'+(remapAny?'  ·  traces renormalized':'')+'</text>';
   if (!exportMode)
     a+='<text class="legendnote" x="'+(P.l+4)+'" y="'+(P.t+P.h-5)+'">grid labels: z/Z0 · X range = frequency window · drag = zoom</text>';
   $('axesG').innerHTML=a;
@@ -1366,6 +1644,39 @@ function renderSmith(W,H,trs,unit){
       +'<circle cx="'+gx(seg.re[seg.n-1]).toFixed(2)+'" cy="'+gy(seg.im[seg.n-1]).toFixed(2)+'" r="3" fill="'+t.color+'"/>';
   }
   $('pathsG').innerHTML=ph;
+
+  // ---- design overlay (the coloring book) ----
+  let dg='';
+  const mapZ=(pAbs)=>{
+    const gm=SNP.gammaOfZ(pAbs[0], pAbs[1], z0c);
+    return (gm && isFinite(gm.re) && isFinite(gm.im))? [gx(gm.re), gy(gm.im)] : null;   // skip the Z=-z0 pole
+  };
+  const pathD=(pts)=>{
+    let d='', pen=false;
+    for (const pt of pts){
+      const q=mapZ(pt);
+      if (!q){ pen=false; continue; }
+      d+=(pen?'L':'M')+q[0].toFixed(2)+' '+q[1].toFixed(2);
+      pen=true;
+    }
+    return d;
+  };
+  solve.forEach((rec,i)=>{
+    const st=sm.steps[i];
+    if (!st || i>lim || st.hide || !rec.ok) return;
+    const col=st.color, op=st.op, wd= st.hl? 3.6 : 2.2;
+    if (rec.circleAbs && st.swr)
+      dg+='<path d="'+pathD(rec.circleAbs)+'" fill="none" stroke="'+col+'" stroke-width="1.3" stroke-dasharray="5 5" opacity="'+(op*0.55)+'"/>';
+    if (rec.pathAbs && rec.pathAbs.length>1)
+      dg+='<path d="'+pathD(rec.pathAbs)+'" fill="none" stroke="'+col+'" stroke-width="'+wd+'" opacity="'+op+'" stroke-linejoin="round" stroke-linecap="round"/>';
+    if (rec.zAbs){
+      const q=mapZ([rec.zAbs.re, rec.zAbs.im]);
+      if (q)
+        dg+='<circle cx="'+q[0].toFixed(2)+'" cy="'+q[1].toFixed(2)+'" r="'+(st.hl?5:4)+'" fill="'+col+'" opacity="'+op+'" stroke="'+chrome().dot+'" stroke-width="1.3"/>'
+          +'<text x="'+(q[0]+7).toFixed(2)+'" y="'+(q[1]-6).toFixed(2)+'" style="font-size:10px" fill="'+col+'" opacity="'+op+'">'+(i+1)+'</text>';
+    }
+  });
+  $('designG').innerHTML=dg;
 }
 
 function renderLegend(){
@@ -1465,8 +1776,10 @@ function renderPinnedMarkers(){
     let X, Y, lab;
     if (P.mode==='smith'){
       const Sm=f.parsed.S[m.key];
-      const re=Sm.re[m.idx], im=Sm.im[m.idx];
+      let re=Sm.re[m.idx], im=Sm.im[m.idx];
       if (!isFinite(re)||!isFinite(im)) return;
+      const gm=SNP.remapGamma(re, im, f.parsed.z0, P.z0c);   // chart may be renormalized
+      re=gm.re; im=gm.im;
       X=P.gx(re); Y=P.gy(im);
       lab='M'+(i+1)+': '+SNP.fmtNum(f.parsed.freqHz[m.idx]/P.unit.mult,5)+' '+P.unit.name
         +' · '+SNP.fmtNum(Math.hypot(re,im),4)+'∠'+SNP.fmtNum(Math.atan2(im,re)*180/Math.PI,4)+'°';
@@ -1610,10 +1923,12 @@ function smithHover(ev,mx,my){
     +'<div class="trow">Γ (mag ∠ deg)<span class="val">'+SNP.fmtNum(mag,5)+' ∠ '+SNP.fmtNum(ang,5)+'°</span></div>'
     +'<div class="trow">Γ (re, im)<span class="val">'+SNP.fmtNum(best.re,5)+', '+SNP.fmtNum(best.im,5)+'</span></div>';
   if (pi===pj){
-    const z=SNP.gammaToZ(best.re,best.im,f.parsed.z0);
+    const z=SNP.gammaToZ(best.re,best.im,P.z0c);   // segs are chart-normalized; Z is invariant
     h+= z ? '<div class="trow">Z into port '+pi+'<span class="val">'+SNP.fmtNum(z.r,5)+' + j('+SNP.fmtNum(z.x,5)+') Ω</span></div>'
           : '<div class="trow">Z into port '+pi+'<span class="val">open (Γ→1)</span></div>';
   }
+  if (P.z0c!==f.parsed.z0)
+    h+='<div class="trow">chart Z₀<span class="val">'+SNP.fmtNum(P.z0c,5)+' Ω <span style="color:var(--ink3)">(file: '+SNP.fmtNum(f.parsed.z0,5)+')</span></span></div>';
   placeTooltip(ev,h);
 }
 function clearHover(){
@@ -1812,7 +2127,7 @@ $('formatSel').addEventListener('change',()=>{
   state.view.ymin=state.view.ymax=state.view.yrmin=state.view.yrmax=null;
   renderPlot();
 });
-$('modeSel').addEventListener('change',()=>{ state.plotMode=$('modeSel').value; renderPlot(); });
+$('modeSel').addEventListener('change',()=>{ state.plotMode=$('modeSel').value; renderAll(); });   // the Smith panel appears/hides with the mode
 $('themeSel').addEventListener('change',()=>{ state.plotTheme=$('themeSel').value; renderPlot(); });
 $('gridChk').addEventListener('change',()=>{ state.grid=$('gridChk').checked; renderPlot(); });
 $('legendChk').addEventListener('change',()=>{ state.legend=$('legendChk').checked; renderPlot(); });
@@ -2443,13 +2758,14 @@ function buildProject(){
       grid:t.grid, legend:t.legend, view:{...t.view}, smithView:{...t.smithView},
       legendPos: t.legendPos?{...t.legendPos}:null,
       plotSize: t.plotSize?{...t.plotSize}:null,
+      smith: sanSmith(t.smith),
       markers:t.markers.map(m=>({ fileIndex:fidToIdx.get(m.fid), key:m.key, idx:m.idx }))
         .filter(m=>m.fileIndex!=null),
     })),
   };
 }
 function saveProject(){
-  if (!state.files.length){ toast('nothing to save yet — import files first', false); return; }
+  if (!sessionHasContent()){ toast('nothing to save yet — import files or draw a Smith design first', false); return; }
   saveTextFile('sparam_project_'+new Date().toISOString().slice(0,10)+'.json',
     JSON.stringify(buildProject(), null, 1));
 }
@@ -2504,6 +2820,7 @@ function loadProjectText(text, opts){
     const z=pt.plotSize;
     t.plotSize=(z && isFinite(z.w) && isFinite(z.h))
       ? { w:Math.max(280,Math.min(4000,Math.round(z.w))), h:Math.max(200,Math.min(4000,Math.round(z.h))) } : null;
+    t.smith=sanSmith(pt.smith);
     t.markers=(Array.isArray(pt.markers)?pt.markers:[]).map(m=>{
       const f=newFiles[m.fileIndex];
       return (f && f.parsed.S[m.key] && Number.isInteger(m.idx) && m.idx>=0 && m.idx<f.parsed.points)
@@ -2590,12 +2907,18 @@ function scheduleAutosave(){
   clearTimeout(autosaveTimer);
   autosaveTimer=setTimeout(autosaveNow, 800);
 }
+function sessionHasContent(){
+  // a Smith design chain (or markers, extra tabs) is user work even with NO files loaded
+  return state.files.length>0
+    || state.tabs.length>1
+    || state.tabs.some(t=> (t.smith && (t.smith.steps.length || t.smith.qList.length)) || t.markers.length>0);
+}
 function autosaveNow(){
   if (!autosaveEnabled) return;
   clearTimeout(autosaveTimer);
   try {
     // an intentionally emptied session clears the autosave too — consistent on refresh
-    const payload = state.files.length ? JSON.stringify(buildProject()) : null;
+    const payload = sessionHasContent() ? JSON.stringify(buildProject()) : null;
     (payload!=null ? idbPut('autosave', payload) : idbDel('autosave')).catch(()=>{});
   } catch(_){ /* autosave must never break the app */ }
 }
@@ -2603,7 +2926,7 @@ function autosaveNow(){
 document.addEventListener('visibilitychange',()=>{ if (document.visibilityState==='hidden') autosaveNow(); });
 window.addEventListener('pagehide', autosaveNow);
 function newProject(){
-  if (state.files.length || state.tabs.length>1){
+  if (sessionHasContent()){
     if (!confirm('Start a new project? Current files, tabs and the autosaved session will be cleared.')) return;
   }
   state.files=[];
@@ -2622,7 +2945,7 @@ $('projNewBtn').onclick=newProject;
     window.__restoreTrace='read:'+(raw?raw.length:'none');
     // only restore into an untouched session — never clobber files the user
     // managed to import before this async read resolved
-    if (raw && !state.files.length){
+    if (raw && !sessionHasContent()){
       const ok=loadProjectText(raw,{quiet:true});
       window.__restoreTrace+=' ok:'+ok;
       if (ok) toast('↺ previous session restored — "new project" starts clean', false);
@@ -2632,11 +2955,120 @@ $('projNewBtn').onclick=newProject;
   autosaveEnabled=true;
 })();
 
+// ---------- smith design panel ----------
+function renderSmithPanel(){
+  const sec=$('smithSec');
+  const on= state.plotMode==='smith';
+  sec.style.display= on? '' : 'none';
+  if (!on) return;
+  const sm=state.smith;
+  $('smZ0').value=sm.z0;
+  $('smYGrid').checked=sm.showYGrid;
+  $('smQ').value=sm.qList.join(', ');
+  const solve=SNP.smithSolve(sm.steps, sm.z0);
+  const lim= sm.cursor==null? sm.steps.length-1 : sm.cursor;
+  $('smSteps').innerHTML= sm.steps.map((st,i)=>{
+    const rec=solve[i]||{};
+    const err= rec.ok===false? '<button class="sbtn warn" title="'+esc(rec.err||'error')+'">⚠</button>' : '';
+    let mid='';
+    if (st.kind==='line')
+      mid='Z0<input type="number" data-sf="z0line" value="'+st.z0line+'" title="line characteristic impedance, Ω"> '
+        +'θ°<input type="number" data-sf="eleDeg" value="'+st.eleDeg+'" title="electrical length in degrees (toward the generator)">'
+        +'<button class="sbtn'+(st.swr?' on':'')+'" data-st="swr" title="draw the full constant-VSWR circle">SWR</button>';
+    else if (st.kind==='renorm')
+      mid='→ Z0<input type="number" data-sf="z0new" value="'+st.z0new+'" title="chart renormalizes to this impedance from here on"> Ω';
+    else
+      mid='<select data-sf="q" title="enter the value as impedance (Z) or admittance (Y)">'
+        +'<option value="z"'+(st.q==='z'?' selected':'')+'>Z</option>'
+        +'<option value="y"'+(st.q==='y'?' selected':'')+'>Y</option></select>'
+        +'<input type="text" data-sf="value" value="'+esc(st.value)+'" placeholder="1+j2">'
+        +'<button class="sbtn'+(st.norm?' on':'')+'" data-st="norm" title="normalized to the chart Z0 (on) or absolute Ω / S (off)">/Z₀</button>';
+    const zEnd= rec.zAbs
+      ? '<span class="zout">→ '+SNP.fmtNum(rec.zAbs.re,4)+(rec.zAbs.im>=0?'+j':'−j')+SNP.fmtNum(Math.abs(rec.zAbs.im),4)+' Ω</span>' : '';
+    return '<div class="steprow'+(i>lim?' dim':'')+'" data-srow="'+i+'">'
+      +'<span class="k">'+(i+1)+'</span><span class="kind">'+st.kind+'</span>'
+      +mid+err
+      +'<input type="color" data-sf="color" value="'+st.color+'" title="path color">'
+      +'<input type="number" class="op" data-sf="op" min="0.1" max="1" step="0.1" value="'+st.op+'" title="opacity">'
+      +'<button class="sbtn'+(st.hl?' on':'')+'" data-st="hl" title="highlight (bold)">HL</button>'
+      +'<button class="sbtn'+(st.hide?'':' on')+'" data-st="hide" title="show / hide this step">👁</button>'
+      +'<button class="sbtn" data-sdel="'+i+'" title="delete this step">✕</button>'
+      +zEnd+'</div>';
+  }).join('') || '<div class="empty">Add a start point, then series/shunt elements, line sections or a renormalization.</div>';
+  $('ssPos').textContent= sm.steps.length? ((sm.cursor==null?'all':(sm.cursor+1))+' / '+sm.steps.length) : '—';
+  $('smSteps').querySelectorAll('[data-srow]').forEach(row=>{
+    const st=sm.steps[+row.dataset.srow];
+    if (!st) return;
+    row.querySelectorAll('[data-sf]').forEach(inp=>{
+      inp.addEventListener('change',()=>{
+        const f=inp.dataset.sf;
+        if (f==='value') st.value=inp.value;
+        else if (f==='q') st.q= inp.value==='y'?'y':'z';
+        else if (f==='color'){ if (/^#[0-9a-fA-F]{6}$/.test(inp.value)) st.color=inp.value; }
+        else if (f==='op'){ const pv=parseFloat(inp.value); if (isFinite(pv)) st.op=Math.max(0.1, Math.min(1, pv)); }
+        else if (f==='z0line'||f==='z0new'){ const pv=parseFloat(inp.value); if (pv>0 && isFinite(pv)) st[f]=pv; }
+        else { const v=parseFloat(inp.value); if (isFinite(v)) st[f]=v; }
+        renderAll();
+      });
+    });
+    row.querySelectorAll('[data-st]').forEach(b=>{
+      b.addEventListener('click',()=>{ st[b.dataset.st]=!st[b.dataset.st]; renderAll(); });
+    });
+  });
+  $('smSteps').querySelectorAll('[data-sdel]').forEach(b=>{
+    b.onclick=()=>{
+      sm.steps.splice(+b.dataset.sdel,1);
+      if (sm.cursor!=null) sm.cursor= sm.steps.length? Math.min(sm.cursor, sm.steps.length-1) : null;
+      renderAll();
+    };
+  });
+}
+$('smZ0').addEventListener('change',()=>{
+  const v=parseFloat($('smZ0').value);
+  if (v>0 && isFinite(v)) state.smith.z0=v;
+  renderAll();
+});
+$('smYGrid').addEventListener('change',()=>{ state.smith.showYGrid=$('smYGrid').checked; renderAll(); });
+$('smQ').addEventListener('change',()=>{
+  state.smith.qList=$('smQ').value.split(/[,;\s]+/).map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8);
+  renderAll();
+});
+document.querySelectorAll('[data-sadd]').forEach(b=>{
+  b.onclick=()=>{
+    const kind=b.dataset.sadd, sm=state.smith;
+    if (sm.steps.length>=64){ toast('the design chain is capped at 64 steps', false); return; }
+    sm.steps.push(sanSmith({ steps:[{
+      kind, q: kind==='shunt'?'y':'z', norm:true,
+      value: kind==='start'? '1+j0' : 'j1',
+      z0line:50, eleDeg:45, swr:kind==='line', z0new:50,
+      color:EXTRA_COLORS[sm.steps.length%EXTRA_COLORS.length], op:1,
+    }] }).steps[0]);
+    if (sm.cursor!=null) sm.cursor=sm.steps.length-1;   // slideshow advances to the new step
+    renderAll();
+  };
+});
+$('ssFirst').onclick=()=>{ if (state.smith.steps.length){ state.smith.cursor=0; renderAll(); } };
+$('ssPrev').onclick=()=>{
+  const sm=state.smith;
+  if (!sm.steps.length) return;
+  const cur= sm.cursor==null? sm.steps.length-1 : sm.cursor;
+  sm.cursor=Math.max(0, cur-1);
+  renderAll();
+};
+$('ssNext').onclick=()=>{
+  const sm=state.smith;
+  if (sm.cursor==null) return;
+  sm.cursor= sm.cursor>=sm.steps.length-1? null : sm.cursor+1;
+  renderAll();
+};
+$('ssAll').onclick=()=>{ state.smith.cursor=null; renderAll(); };
+
 // ---------- render all ----------
 function renderAll(){
   renderTabs();
   renderFiles();
   renderMatrix();
+  renderSmithPanel();
   renderPlot();
   scheduleAutosave();
 }
@@ -2654,7 +3086,7 @@ window.SNPApp={
   plotToPngBlob, plotToPdfBlob,
   cycleDash, setFileLabel:(fid,label)=>{ const f=fileById(fid); if (f){ f.label=label||null; renderAll(); } },
   addTab, switchTab, closeTab, dupTab, curTab, buildProject, saveProject, loadProjectText, setSidebarWidth,
-  newProject, autosaveNow, idbGet, idbDel,
+  newProject, autosaveNow, idbGet, idbDel, renderSmithPanel, sanSmith,
 };
 })();
 </script>
