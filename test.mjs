@@ -753,5 +753,50 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   check('active clamps into range', SS({ chains: [{ steps: [] }], active: 9 }).active === 0);
 }
 
+// ---------- 35. grid toggles: wiring (source-level, the call sites) ----------
+// The Smith Z grid and the header "grid" box are ONE per-tab flag shown twice.
+// A helper can be right while a renderer keeps its own copy of the bug, so these
+// assert the CALL SITES: both checkboxes exist, both write state.grid, each
+// cross-syncs the other, and the Z circles/arcs are gated on that same flag.
+{
+  const has = (re, what) => check(what, re.test(html), 'not found in index.html');
+  has(/id="smZGrid"[^>]*>\s*Z grid|<input type="checkbox" id="smZGrid">\s*Z grid/, 'Smith panel has a "Z grid" checkbox');
+  has(/id="smYGrid"[^>]*>\s*Y grid|<input type="checkbox" id="smYGrid">\s*Y grid/, 'Smith panel still has the "Y grid" checkbox');
+  // the panel box drives the same flag the header box does, and syncs it back
+  has(/\$\('smZGrid'\)\.addEventListener\('change',\(\)=>\{[\s\S]{0,200}?state\.grid=\$\('smZGrid'\)\.checked/,
+      'the Z-grid checkbox writes state.grid');
+  has(/\$\('smZGrid'\)\.addEventListener\('change',\(\)=>\{[\s\S]{0,200}?\$\('gridChk'\)\.checked=state\.grid/,
+      'the Z-grid checkbox re-checks the header box');
+  has(/\$\('gridChk'\)\.addEventListener\('change',\(\)=>\{[\s\S]{0,220}?\$\('smZGrid'\)\.checked=state\.grid/,
+      'the header box re-checks the Z-grid checkbox');
+  // both toggles must survive a refresh: they are project state
+  has(/\$\('gridChk'\)\.addEventListener\('change',\(\)=>\{[\s\S]{0,220}?scheduleAutosave\(\)/,
+      'toggling the grid schedules an autosave');
+  has(/renderSmithPanel[\s\S]{0,600}?\$\('smZGrid'\)\.checked=state\.grid/,
+      'the panel re-syncs the Z-grid box from state on every render');
+  // the render gate: constant-r circles come from smithGridGeometry under state.grid
+  const rs = html.slice(html.indexOf('function renderSmith('));
+  check('renderSmith gates smithGridGeometry on state.grid',
+    /if \(state\.grid\)\{?\s*\n?\s*const geo=SNP\.smithGridGeometry\(\)/.test(rs));
+  check('renderSmith gates the Y grid on sm.showYGrid',
+    /if \(sm\.showYGrid\)\{?\s*\n?\s*const yg=SNP\.smithYGridGeometry\(\)/.test(rs));
+  // ...and the r/x TICK NUMBERS with it — a gridless chart wearing impedance
+  // numerals is exactly the half-done state this feature is about
+  check('renderSmith gates the r/x number labels on state.grid',
+    /if \(state\.grid\)\{?\s*\n?\s*for \(const rv of \[0\.2,0\.5,1,2,5\]\)/.test(rs));
+  // gridless = the complex plane stays: unit circle + real axis are NOT gated.
+  // Measure the PREFIX before the first conditional — an indexOf('if (state.grid)')
+  // over the whole block silently re-latches onto a later gate when an earlier one
+  // is deleted, so the check would keep passing over the regression it exists for.
+  const axesHead = rs.slice(rs.indexOf("let a='<circle"), rs.indexOf('if (', rs.indexOf("let a='<circle")));
+  check('the unit circle + real axis are drawn unconditionally (the complex plane)',
+    (axesHead.match(/stroke="var\(--axis\)"/g) || []).length === 2, axesHead.slice(0, 80));
+  // the in-plot note names only the grids actually drawn — and says nothing when neither is
+  check('the grid-label note is built from both flags',
+    /if \(state\.grid\) gl\.push\('z\/Z0'\)/.test(rs) && /if \(sm\.showYGrid\) gl\.push\('y\/Y0'\)/.test(rs));
+  check('the note omits the "grid labels" clause when neither grid is drawn',
+    /gl\.length\?\s*'grid labels: '/.test(rs));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);

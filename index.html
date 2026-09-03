@@ -298,7 +298,7 @@
       <option value="im">Im(S)</option>
     </select>
   </label>
-  <label class="inline"><input type="checkbox" id="gridChk" checked> grid</label>
+  <label class="inline" title="XY: axis gridlines · Smith: the Z (impedance) grid"><input type="checkbox" id="gridChk" checked> grid</label>
   <label class="inline"><input type="checkbox" id="legendChk" checked> legend</label>
 </header>
 <main>
@@ -354,6 +354,7 @@
     <h2>Smith design <span class="rule"></span></h2>
     <div class="smithrow">
       <label class="inline">chart Z₀ <input type="text" id="smZ0" style="width:4.6em" title="↑/↓ steps the digit at the cursor"> Ω</label>
+      <label class="inline" title="constant-R / constant-X impedance grid — the same flag as the header &quot;grid&quot; box"><input type="checkbox" id="smZGrid"> Z grid</label>
       <label class="inline"><input type="checkbox" id="smYGrid"> Y grid</label>
       <label class="inline">Q <input type="text" id="smQ" placeholder="1, 2" style="width:4.5em" title="constant-Q circles, comma-separated"></label>
     </div>
@@ -1749,8 +1750,14 @@ function renderSmith(W,H,trs,unit){
   const remapAny=trs.some(t=>t.f.parsed.z0!==z0c);
   a+='<text class="axislabel" x="'+(P.l+6)+'" y="'+(P.t+14)+'" text-anchor="start">Z₀ = '
     +SNP.fmtNum(z0c,5)+' Ω'+(remapAny?'  ·  traces renormalized':'')+'</text>';
-  if (!exportMode)
-    a+='<text class="legendnote" x="'+(P.l+4)+'" y="'+(P.t+P.h-5)+'">grid labels: z/Z0 · X range = frequency window · drag = zoom</text>';
+  if (!exportMode){
+    const gl=[];
+    if (state.grid) gl.push('z/Z0');
+    if (sm.showYGrid) gl.push('y/Y0');
+    a+='<text class="legendnote" x="'+(P.l+4)+'" y="'+(P.t+P.h-5)+'">'
+      +(gl.length? 'grid labels: '+gl.join(' · ')+' · ' : '')
+      +'X range = frequency window · drag = zoom</text>';
+  }
   $('axesG').innerHTML=a;
 
   // loci: raw complex samples, full resolution, no interpolation
@@ -2303,8 +2310,12 @@ $('formatSel').addEventListener('change',()=>{
 });
 $('modeSel').addEventListener('change',()=>{ state.plotMode=$('modeSel').value; renderAll(); });   // the Smith panel appears/hides with the mode
 $('themeSel').addEventListener('change',()=>{ state.plotTheme=$('themeSel').value; renderPlot(); });
-$('gridChk').addEventListener('change',()=>{ state.grid=$('gridChk').checked; renderPlot(); });
-$('legendChk').addEventListener('change',()=>{ state.legend=$('legendChk').checked; renderPlot(); });
+$('gridChk').addEventListener('change',()=>{
+  state.grid=$('gridChk').checked;
+  $('smZGrid').checked=state.grid;          // the Smith panel shows this same flag as "Z grid"
+  renderPlot(); scheduleAutosave();
+});
+$('legendChk').addEventListener('change',()=>{ state.legend=$('legendChk').checked; renderPlot(); scheduleAutosave(); });
 
 // ---------- file input / drop ----------
 $('openBtn').onclick=()=>$('fileInput').click();
@@ -3137,6 +3148,7 @@ function renderSmithPanel(){
   if (!on) return;
   const sm=state.smith;
   $('smZ0').value=sm.z0;
+  $('smZGrid').checked=state.grid;
   $('smYGrid').checked=sm.showYGrid;
   $('smQ').value=sm.qList.join(', ');
   sm.active=Math.min(sm.active, sm.chains.length-1);
@@ -3350,6 +3362,11 @@ $('smZ0').addEventListener('keydown',ev=>{
   inp.value=r.value;
   inp.setSelectionRange(r.caret, r.caret);
   state.smith.z0=pv;
+  renderPlot(); scheduleAutosave();
+});
+$('smZGrid').addEventListener('change',()=>{
+  state.grid=$('smZGrid').checked;          // one per-tab flag, two views of it
+  $('gridChk').checked=state.grid;
   renderPlot(); scheduleAutosave();
 });
 $('smYGrid').addEventListener('change',()=>{ state.smith.showYGrid=$('smYGrid').checked; renderAll(); });
