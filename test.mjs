@@ -1052,5 +1052,68 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
     /const col= best\.kind==='trace'\? best\.t\.color : best\.h\.st\.color;/.test(sh));
 }
 
+// ---------- 40. the r=1 / g=1 match circles ----------
+{
+  const u = SNP.smithUnityCircles();
+  // LIFTED from the grids, not re-derived: the highlight must land ON the line it
+  // highlights, at every zoom, for ever
+  const zr1 = SNP.smithGridGeometry().circles.find(c => c.v === 1);
+  const yg1 = SNP.smithYGridGeometry().circles.find(c => c.v === 1);
+  check('r=1 IS the impedance grid\'s own r=1 circle',
+    u.r1.cx === zr1.cx && u.r1.cy === zr1.cy && u.r1.rad === zr1.rad);
+  check('g=1 IS the admittance grid\'s own g=1 circle',
+    u.g1.cx === yg1.cx && u.g1.cy === yg1.cy && u.g1.rad === yg1.rad);
+  check('g=1 is the mirror of r=1 (the replica)',
+    u.g1.cx === -u.r1.cx && u.g1.cy === u.r1.cy && u.g1.rad === u.r1.rad);
+  check('the classic geometry: centre ±0.5, radius 0.5',
+    u.r1.cx === 0.5 && u.r1.cy === 0 && u.r1.rad === 0.5);
+
+  // the three points that make these circles the ones an L-match is built on
+  const on = (c, re, im) => approx(Math.hypot(re - c.cx, im - c.cy), c.rad, 1e-12);
+  check('both pass through Γ=0 — the match itself', on(u.r1, 0, 0) && on(u.g1, 0, 0));
+  check('r=1 touches the unit circle at Γ=+1 (an open)', on(u.r1, 1, 0));
+  check('g=1 touches it at Γ=-1 (a short)', on(u.g1, -1, 0));
+  // every point of r=1 really has unit normalized resistance (and g=1 unit conductance)
+  let worstR = 0, worstG = 0;
+  for (let k = 0; k < 64; k++) {
+    const t = k / 64 * 2 * Math.PI;
+    const pr = SNP.smithReadout(u.r1.cx + u.r1.rad * Math.cos(t), u.r1.cy + u.r1.rad * Math.sin(t), 50);
+    if (pr.zn) worstR = Math.max(worstR, Math.abs(pr.zn.r - 1));
+    const pg = SNP.smithReadout(u.g1.cx + u.g1.rad * Math.cos(t), u.g1.cy + u.g1.rad * Math.sin(t), 50);
+    if (pg.yn) worstG = Math.max(worstG, Math.abs(pg.yn.g - 1));
+  }
+  check('every point of the r=1 circle reads r = 1', worstR < 1e-9, 'worst ' + worstR);
+  check('every point of the g=1 circle reads g = 1', worstG < 1e-9, 'worst ' + worstG);
+  check('each circle carries its own label', u.r1.label === 'r = 1' && u.g1.label === 'g = 1');
+
+  // the toggles are project state, off by default
+  const d = SNP.sanSmith(null);
+  check('the highlights are off until asked for', d.hlR1 === false && d.hlG1 === false);
+  const on2 = SNP.sanSmith({ hlR1: 1, hlG1: 0 });
+  check('they are coerced to booleans and round-trip', on2.hlR1 === true && on2.hlG1 === false
+    && JSON.stringify(SNP.sanSmith(on2)) === JSON.stringify(on2));
+}
+
+// ---------- 41. the match circles: wiring ----------
+{
+  const rs = html.slice(html.indexOf('function renderSmith('));
+  // drawn from the PURE geometry, and INDEPENDENT of either grid toggle: the clearest
+  // figure is these two circles alone on a bare complex plane
+  check('the circles come from SNP.smithUnityCircles', /const unity=SNP\.smithUnityCircles\(\);/.test(rs));
+  check('r=1 is gated on its OWN flag, not on the Z grid', /if \(sm\.hlR1\) hlPairs\.push\(\[unity\.r1/.test(rs));
+  check('g=1 is gated on its OWN flag, not on the Y grid', /if \(sm\.hlG1\) hlPairs\.push\(\[unity\.g1/.test(rs));
+  const hlBlock = rs.slice(rs.indexOf('const unity=SNP.smithUnityCircles'), rs.indexOf('for (const Q of sm.qList)'));
+  check('the highlight is not nested inside a grid branch', !/state\.grid|showYGrid/.test(hlBlock), hlBlock);
+  check('it is drawn wider than a grid line', /stroke-width="1\.9"/.test(rs));
+  check('each circle is labelled on the chart', /\+c\.label\+/.test(rs));
+  // the toggles: panel, sync, persistence
+  check('the panel has both checkboxes', /id="smHlR1"/.test(html) && /id="smHlG1"/.test(html));
+  check('the panel re-syncs them from state',
+    /\$\('smHlR1'\)\.checked=sm\.hlR1;/.test(html) && /\$\('smHlG1'\)\.checked=sm\.hlG1;/.test(html));
+  for (const k of ['hlR1','hlG1'])
+    check('toggling ' + k + ' redraws and persists',
+      new RegExp("state\\.smith\\." + k + "=\\$\\('sm" + (k==='hlR1'?'HlR1':'HlG1') + "'\\)\\.checked; renderPlot\\(\\); scheduleAutosave\\(\\)").test(html));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);

@@ -356,6 +356,8 @@
       <label class="inline">chart Z₀ <input type="text" id="smZ0" style="width:4.6em" title="↑/↓ steps the digit at the cursor"> Ω</label>
       <label class="inline" title="constant-R / constant-X impedance grid — the same flag as the header &quot;grid&quot; box"><input type="checkbox" id="smZGrid"> Z grid</label>
       <label class="inline"><input type="checkbox" id="smYGrid"> Y grid</label>
+      <label class="inline" title="highlight the r = 1 circle — every impedance whose real part is the chart Z₀ (an L-match lands on it)"><input type="checkbox" id="smHlR1"> r=1</label>
+      <label class="inline" title="highlight the g = 1 circle — the admittance mirror of r = 1 (a shunt-first L-match lands on it)"><input type="checkbox" id="smHlG1"> g=1</label>
       <label class="inline">Q <input type="text" id="smQ" placeholder="1, 2" style="width:4.5em" title="constant-Q circles, comma-separated"></label>
     </div>
     <div class="smithrow" id="smHoverRow" title="what the hover tooltip reads out"></div>
@@ -734,6 +736,21 @@ const SNP = (function(){
     }
     return { circles, arcs };
   }
+  // The two circles an L-match is built on: r = 1 (every impedance whose REAL part is Z0)
+  // and its mirror g = 1 (every admittance whose real part is Y0). A match walks along a
+  // constant-x arc to one of them, then along it to the centre. They are LIFTED OUT of the
+  // grids they highlight — never re-derived — so a highlight can never sit beside the line
+  // it is highlighting. r=1 touches the unit circle at G=+1 (an open), g=1 at G=-1 (a
+  // short), and both pass through G=0, which is the match itself.
+  function smithUnityCircles(){
+    const r1=smithGridGeometry().circles.find(c=>c.v===1);
+    const g1=smithYGridGeometry().circles.find(c=>c.v===1);
+    return {
+      r1:{ cx:r1.cx, cy:r1.cy, rad:r1.rad, label:'r = 1' },
+      g1:{ cx:g1.cx, cy:g1.cy, rad:g1.rad, label:'g = 1' },
+    };
+  }
+
   // where the constant-x circle meets the unit circle: Gamma of z = jx (label anchor)
   function smithXLabelPoint(x){
     const d=x*x+1;
@@ -957,6 +974,8 @@ const SNP = (function(){
     return {
       z0:(isFinite(sm.z0)&&sm.z0>0)?+sm.z0:50,
       showYGrid:!!sm.showYGrid,
+      hlR1:!!sm.hlR1,
+      hlG1:!!sm.hlG1,
       hover,
       qList:Array.isArray(sm.qList)? sm.qList.map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8):[],
       active:Math.min(Math.max(0, sm.active|0), chains.length-1),
@@ -1144,7 +1163,7 @@ const SNP = (function(){
 
   return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint,
     parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve, stepComplexAt, sanSmith,
-    smithReadout, SMITH_HOVER_KEYS };
+    smithReadout, SMITH_HOVER_KEYS, smithUnityCircles };
 })();
 if (typeof module!=='undefined' && module.exports) module.exports = SNP;
 //<<PURE_END>>
@@ -1523,9 +1542,9 @@ const M={ l:66, r:18, t:14, b:48 };
 // unlike the tooltip, which is app UI and stays dark)
 const PLOT_CHROME={
   dark:  { panel:'rgba(10,16,28,.88)',  panelStroke:'#2c4266', dot:'#0b1220', cross:'#5e7092',
-           gridY:'#1e3d35', gridYInk:'#4d9b7f', q:'#8b5cf6' },
+           gridY:'#1e3d35', gridYInk:'#4d9b7f', q:'#8b5cf6', hlR:'#9fb3d9', hlG:'#4d9b7f' },
   light: { panel:'rgba(255,255,255,.93)', panelStroke:'#cbd5e1', dot:'#ffffff', cross:'#94a3b8',
-           gridY:'#cde9db', gridYInk:'#2f7d5c', q:'#7c3aed' },
+           gridY:'#cde9db', gridYInk:'#2f7d5c', q:'#7c3aed', hlR:'#334155', hlG:'#2f7d5c' },
 };
 function chrome(){ return PLOT_CHROME[state.plotTheme]||PLOT_CHROME.dark; }
 
@@ -1759,6 +1778,12 @@ function renderSmith(W,H,trs,unit){
     for (const c of yg.arcs)
       g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="'+chrome().gridY+'" stroke-width="1"/>';
   }
+  const unity=SNP.smithUnityCircles();            // ('uc' is the clip circle, above)
+  const hlPairs=[];
+  if (sm.hlR1) hlPairs.push([unity.r1, chrome().hlR]);
+  if (sm.hlG1) hlPairs.push([unity.g1, chrome().hlG]);
+  for (const [c,col] of hlPairs)                   // drawn over the grid line it emphasises
+    g+='<circle cx="'+gx(c.cx)+'" cy="'+gy(c.cy)+'" r="'+(c.rad*sc)+'" fill="none" stroke="'+col+'" stroke-width="1.9"/>';
   for (const Q of sm.qList){
     const qs=SNP.qCircleGeometry(Q);
     if (qs) for (const c of qs)
@@ -1787,6 +1812,10 @@ function renderSmith(W,H,trs,unit){
       const X=gx((1-gv)/(1+gv)), Y=gy(0);
       if (inPlot(X,Y)) a+='<text x="'+X+'" y="'+(Y-6)+'" text-anchor="middle" style="font-size:10px" fill="'+chrome().gridYInk+'">'+gv+'</text>';
     }
+  }
+  for (const [c,col] of hlPairs){
+    const X=gx(c.cx), Y=gy(c.cy+c.rad);            // the top of the circle, clear of the axis
+    if (inPlot(X,Y)) a+='<text x="'+X+'" y="'+(Y-5)+'" text-anchor="middle" style="font-size:10px" fill="'+col+'">'+c.label+'</text>';
   }
   for (const Q of sm.qList){
     const vtop=-1/Q+Math.sqrt(1+1/(Q*Q));
@@ -3289,6 +3318,8 @@ function renderSmithPanel(){
   $('smZ0').value=sm.z0;
   $('smZGrid').checked=state.grid;
   $('smYGrid').checked=sm.showYGrid;
+  $('smHlR1').checked=sm.hlR1;
+  $('smHlG1').checked=sm.hlG1;
   renderHoverChips(sm);
   $('smQ').value=sm.qList.join(', ');
   sm.active=Math.min(sm.active, sm.chains.length-1);
@@ -3536,6 +3567,8 @@ $('smZGrid').addEventListener('change',()=>{
   renderPlot(); scheduleAutosave();
 });
 $('smYGrid').addEventListener('change',()=>{ state.smith.showYGrid=$('smYGrid').checked; renderAll(); });
+$('smHlR1').addEventListener('change',()=>{ state.smith.hlR1=$('smHlR1').checked; renderPlot(); scheduleAutosave(); });
+$('smHlG1').addEventListener('change',()=>{ state.smith.hlG1=$('smHlG1').checked; renderPlot(); scheduleAutosave(); });
 $('smQ').addEventListener('change',()=>{
   state.smith.qList=$('smQ').value.split(/[,;\s]+/).map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8);
   renderAll();
