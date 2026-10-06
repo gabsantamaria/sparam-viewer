@@ -358,6 +358,7 @@
       <label class="inline"><input type="checkbox" id="smYGrid"> Y grid</label>
       <label class="inline">Q <input type="text" id="smQ" placeholder="1, 2" style="width:4.5em" title="constant-Q circles, comma-separated"></label>
     </div>
+    <div class="smithrow" id="smHoverRow" title="what the hover tooltip reads out"></div>
     <div class="smithrow" style="color:var(--ink3)">trace freq window = the X range fields above</div>
     <div id="smSteps"></div>
     <div class="quickbtns">
@@ -394,7 +395,7 @@
     <div id="tooltip"></div>
     <div id="toasts"></div>
     <div id="hintbar">
-      <span><b>hover</b> = live readout (snaps to real data samples — never interpolated)</span>
+      <span><b>hover</b> = live readout (snaps to real data samples — never interpolated; Smith design paths read out too)</span>
       <span><b>click</b> = pin marker</span>
       <span><b>scroll</b> = zoom at cursor</span>
       <span><b>drag</b> = pan on Smith · box-zoom on XY (⇧drag pans)</span>
@@ -683,6 +684,44 @@ const SNP = (function(){
     return { r:z0*(nRe*dRe+nIm*dIm)/den, x:z0*(nIm*dRe-nRe*dIm)/den };
   }
 
+  // which quantities the Smith hover tooltip lists — fixed vocabulary, fixed display
+  // order. An unknown key never enters a project file; an absent map means the defaults.
+  const SMITH_HOVER_KEYS=['gpolar','gri','rl','swr','zn','z','yn','y','q'];
+  const SMITH_HOVER_DEFAULT={ gpolar:true, gri:true, rl:false, swr:false, zn:true, z:true, yn:false, y:false, q:false };
+
+  // Everything a point on the chart IS, read from its reflection coefficient. ONE Mobius
+  // (gammaToZ) serves both halves, because normalized y is z of -G:
+  //   (1-G)/(1+G) = zn(-G)   exactly.
+  // So y can never disagree with z, and the two poles fall out on their own — an OPEN
+  // (G=+1) has no z and y=0, a SHORT (G=-1) has z=0 and no y. A null is "infinite here",
+  // stated; it is never a silent NaN.
+  // A LOSSLESS point (|G| = 1: a short, an open, any pure reactance) divides out to
+  // R = +-1e-15 and a conductance to match. That is float noise, not a negative
+  // resistance, and no measurement resolves a resistance 1e-9 below its own reactance —
+  // so the zero is reported, with the infinite Q and SWR that go with it, instead of
+  // noise dressed up as a number. An ACTIVE device (a real negative R, 1e-3 and up) is
+  // far above this floor and still reads negative, with no Q.
+  const LOSSLESS_EPS=1e-9;
+  function zeroTinyReal(p){ if (p && Math.abs(p.r)<LOSSLESS_EPS*(1+Math.abs(p.x))) p.r=0; return p; }
+
+  function smithReadout(re, im, z0){
+    const mag=Math.hypot(re,im);
+    const zn=zeroTinyReal(gammaToZ(re, im, 1));
+    const yn=zeroTinyReal(gammaToZ(-re, -im, 1));
+    let q=null;                                     // Q is |X|/R; a negative resistance has none
+    if (zn && zn.r>0) q=Math.abs(zn.x)/zn.r;
+    else if (zn && zn.r===0) q= zn.x===0? 0 : Infinity;
+    return {
+      re, im, mag, ang: Math.atan2(im,re)*180/Math.PI,
+      db: mag>0? 20*Math.log10(mag) : -Infinity,    // caller signs it: RL = -db, |S| = db
+      swr: mag>=1-LOSSLESS_EPS? Infinity : (1+mag)/(1-mag),
+      zn, q,
+      yn: yn? { g:yn.r, b:yn.x } : null,
+      z: zn? { r:zn.r*z0, x:zn.x*z0 } : null,
+      y: yn? { g:yn.r/z0, b:yn.x/z0 } : null,       // siemens
+    };
+  }
+
   // Smith-chart grid in the Gamma plane: constant-r circles (center r/(1+r), radius 1/(1+r))
   // and constant-x circles (center (1, 1/x), radius 1/|x|), clipped to |G|<=1 by the renderer.
   function smithGridGeometry(){
@@ -910,9 +949,15 @@ const SNP = (function(){
       if (!c.steps.length) c.cursor=null;
       else if (c.cursor!=null) c.cursor=Math.min(c.cursor, c.steps.length-1);
     }
+    const hoverSrc=(sm.hover&&typeof sm.hover==='object')? sm.hover : null;
+    const hover={};
+    // per KEY, not per map: a quantity this version adds must arrive at an older project
+    // as its default, while a quantity the user switched off stays off
+    for (const k of SMITH_HOVER_KEYS) hover[k]= (hoverSrc && k in hoverSrc)? !!hoverSrc[k] : SMITH_HOVER_DEFAULT[k];
     return {
       z0:(isFinite(sm.z0)&&sm.z0>0)?+sm.z0:50,
       showYGrid:!!sm.showYGrid,
+      hover,
       qList:Array.isArray(sm.qList)? sm.qList.map(Number).filter(v=>v>0&&isFinite(v)).slice(0,8):[],
       active:Math.min(Math.max(0, sm.active|0), chains.length-1),
       chains,
@@ -1098,7 +1143,8 @@ const SNP = (function(){
   }
 
   return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint,
-    parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve, stepComplexAt, sanSmith };
+    parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve, stepComplexAt, sanSmith,
+    smithReadout, SMITH_HOVER_KEYS };
 })();
 if (typeof module!=='undefined' && module.exports) module.exports = SNP;
 //<<PURE_END>>
@@ -1777,17 +1823,19 @@ function renderSmith(W,H,trs,unit){
 
   // ---- design overlay (the coloring book) ----
   let dg='';
+  const dpick=[];                                  // what the hover hit-tests IS what gets drawn
   const mapZ=(pAbs)=>{
     const gm=SNP.gammaOfZ(pAbs[0], pAbs[1], z0c);
-    return (gm && isFinite(gm.re) && isFinite(gm.im))? [gx(gm.re), gy(gm.im)] : null;   // skip the Z=-z0 pole
+    return (gm && isFinite(gm.re) && isFinite(gm.im))? [gx(gm.re), gy(gm.im), gm.re, gm.im] : null;   // skip the Z=-z0 pole
   };
-  const pathD=(pts)=>{
-    let d='', pen=false;
+  const pathD=(pts, sink)=>{
+    let d='', pen=false, sub=null;
     for (const pt of pts){
       const q=mapZ(pt);
-      if (!q){ pen=false; continue; }
+      if (!q){ pen=false; sub=null; continue; }     // a pen-up must not become a hover segment
       d+=(pen?'L':'M')+q[0].toFixed(2)+' '+q[1].toFixed(2);
       pen=true;
+      if (sink){ if (!sub){ sub=[]; sink.subs.push(sub); } sub.push(q); }
     }
     return d;
   };
@@ -1800,17 +1848,23 @@ function renderSmith(W,H,trs,unit){
     const col=st.color, op=st.op, wd= st.hl? 3.6 : 2.2;
     if (rec.circleAbs && st.swr)
       dg+='<path d="'+pathD(rec.circleAbs)+'" fill="none" stroke="'+col+'" stroke-width="1.3" stroke-dasharray="5 5" opacity="'+(op*0.55)+'"/>';
-    if (rec.pathAbs && rec.pathAbs.length>1)
-      dg+='<path d="'+pathD(rec.pathAbs)+'" fill="none" stroke="'+col+'" stroke-width="'+wd+'" opacity="'+op+'" stroke-linejoin="round" stroke-linecap="round"/>';
+    if (rec.pathAbs && rec.pathAbs.length>1){
+      const hit={ ch, st, i, subs:[] };
+      dg+='<path d="'+pathD(rec.pathAbs, hit)+'" fill="none" stroke="'+col+'" stroke-width="'+wd+'" opacity="'+op+'" stroke-linejoin="round" stroke-linecap="round"/>';
+      if (hit.subs.length) dpick.push(hit);
+    }
     if (rec.zAbs){
       const q=mapZ([rec.zAbs.re, rec.zAbs.im]);
-      if (q)
+      if (q){
         dg+='<circle cx="'+q[0].toFixed(2)+'" cy="'+q[1].toFixed(2)+'" r="'+(st.hl?5:4)+'" fill="'+col+'" opacity="'+op+'" stroke="'+chrome().dot+'" stroke-width="1.3"/>'
           +'<text x="'+(q[0]+7).toFixed(2)+'" y="'+(q[1]-6).toFixed(2)+'" style="font-size:10px" fill="'+col+'" opacity="'+op+'">'+(i+1)+'</text>';
+        dpick.push({ ch, st, i, subs:[[q]] });
+      }
     }
   });
   });
   $('designG').innerHTML=dg;
+  P.dpick=dpick;
 }
 
 function renderLegend(){
@@ -1982,7 +2036,7 @@ function placeTooltip(ev, html){
   tt.style.left=tx+'px'; tt.style.top=ty+'px';
 }
 function onHover(ev){
-  if (!P || !P.trs.length){ return; }
+  if (!P){ return; }
   const r=svg.getBoundingClientRect();
   const mx=ev.clientX-r.left, my=ev.clientY-r.top;
   if (mx<P.l||mx>P.l+P.w||my<P.t||my>P.t+P.h){ clearHover(); return; }
@@ -2032,39 +2086,121 @@ function onHover(ev){
   if (rows.length>10) h+='<div class="trow" style="color:var(--ink3)">… '+(rows.length-10)+' more</div>';
   placeTooltip(ev,h);
 }
+const HOVER_PX=20;                                   // "on the curve", in SCREEN px at any zoom
+// nearest point of segment AB to M; t clamps to [0,1], so an endpoint wins past the ends
+function segNear(ax,ay,bx,by,mx,my){
+  const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
+  let t = L2>0 ? ((mx-ax)*dx+(my-ay)*dy)/L2 : 0;
+  t = t<0?0:(t>1?1:t);
+  const x=ax+t*dx, y=ay+t*dy, ex=mx-x, ey=my-y;
+  return { t, x, y, d2:ex*ex+ey*ey };
+}
+// the quantity rows, from ONE pure readout of the hovered point. zOk=false is a
+// TRANSMISSION trace, where every impedance-like quantity would be meaningless: those
+// rows are withheld and said to be, never silently shown against the wrong model.
+function smithTipRows(rd, hov, zOk){
+  const row=(lab,val)=>'<div class="trow">'+lab+'<span class="val">'+val+'</span></div>';
+  const cx=(a,b,u)=>SNP.fmtNum(a,5)+' + j('+SNP.fmtNum(b,5)+')'+(u?' '+u:'');
+  const inf=v=> v===Infinity? '∞' : (v===-Infinity? '-∞' : SNP.fmtNum(v,5));
+  let h='';
+  if (hov.gpolar) h+=row('Γ (mag ∠ deg)', SNP.fmtNum(rd.mag,5)+' ∠ '+SNP.fmtNum(rd.ang,5)+'°');
+  if (hov.gri)    h+=row('Γ (re, im)', SNP.fmtNum(rd.re,5)+', '+SNP.fmtNum(rd.im,5));
+  if (hov.rl)     h+= zOk
+      ? row('return loss', rd.mag>0? inf(-rd.db)+' dB' : '∞ dB (matched)')
+      : row('|S|', rd.mag>0? inf(rd.db)+' dB' : '-∞ dB');
+  if (zOk){
+    if (hov.swr) h+=row('SWR', rd.swr===Infinity? '∞' : SNP.fmtNum(rd.swr,5));
+    if (hov.zn)  h+=row('z = Z/Z₀', rd.zn? cx(rd.zn.r, rd.zn.x) : 'open (Γ→1)');
+    if (hov.z)   h+=row('Z', rd.z? cx(rd.z.r, rd.z.x, 'Ω') : 'open (Γ→1)');
+    if (hov.yn)  h+=row('y = Y/Y₀', rd.yn? cx(rd.yn.g, rd.yn.b) : 'short (Γ→−1)');
+    if (hov.y)   h+=row('Y', rd.y? cx(rd.y.g*1e3, rd.y.b*1e3, 'mS') : 'short (Γ→−1)');
+    if (hov.q)   h+=row('Q = |X|/R', rd.q===null? '—' : (rd.q===Infinity? '∞' : SNP.fmtNum(rd.q,4)));
+  } else if (hov.swr||hov.zn||hov.z||hov.yn||hov.y||hov.q){
+    h+='<div class="trow" style="color:var(--ink3)">z · Z · y · Y · SWR · Q: reflection traces only</div>';
+  }
+  return h;
+}
 function smithHover(ev,mx,my){
+  const R=HOVER_PX, R2=R*R;
   let best=null;
+  const take=c=>{ if (!best || c.d2<best.d2) best=c; };
+  // (1) measured loci — hit-test the DRAWN polyline, then snap the readout to the nearer
+  // real SAMPLE: hovering mid-segment still reads a measurement, never an interpolation
   for (const e of P.segs){
     const seg=e.seg;
-    for (let q=0;q<seg.n;q++){
-      const X=P.gx(seg.re[q]), Y=P.gy(seg.im[q]);
-      const dist=Math.hypot(X-mx, Y-my);
-      if (!best||dist<best.dist) best={ t:e.t, idx:seg.idxs[q], re:seg.re[q], im:seg.im[q], X, Y, dist };
+    if (!seg.n) continue;
+    let pX=P.gx(seg.re[0]), pY=P.gy(seg.im[0]);
+    if (seg.n===1){
+      const d2=(pX-mx)*(pX-mx)+(pY-my)*(pY-my);
+      if (d2<=R2) take({ kind:'trace', t:e.t, idx:seg.idxs[0], re:seg.re[0], im:seg.im[0], X:pX, Y:pY, hx:pX, hy:pY, d2 });
+      continue;
+    }
+    for (let q=1;q<seg.n;q++){
+      const cX=P.gx(seg.re[q]), cY=P.gy(seg.im[q]);
+      if (!((pX<mx-R&&cX<mx-R)||(pX>mx+R&&cX>mx+R)||(pY<my-R&&cY<my-R)||(pY>my+R&&cY>my+R))){
+        const sn=segNear(pX,pY,cX,cY,mx,my);
+        if (sn.d2<=R2){
+          const k= sn.t<0.5? q-1 : q;               // the sample the readout belongs to
+          take({ kind:'trace', t:e.t, idx:seg.idxs[k], re:seg.re[k], im:seg.im[k],
+                 X:(k===q?cX:pX), Y:(k===q?cY:pY), hx:sn.x, hy:sn.y, d2:sn.d2 });
+        }
+      }
+      pX=cX; pY=cY;
     }
   }
-  if (!best||best.dist>36){ clearHover(); return; }
-  hoverFocus=best;
-  $('hoverG').innerHTML=
-    '<circle cx="'+best.X+'" cy="'+best.Y+'" r="6" fill="none" stroke="'+best.t.color+'" stroke-width="2"/>'
-    +'<circle cx="'+best.X+'" cy="'+best.Y+'" r="2.6" fill="'+best.t.color+'"/>';
-  const f=best.t.f;
-  const mag=Math.hypot(best.re,best.im), ang=Math.atan2(best.im,best.re)*180/Math.PI;
-  const [pi,pj]=best.t.key.split(',');
-  let h='<div class="tfreq">'+SNP.fmtNum(f.parsed.freqHz[best.idx]/P.unit.mult,6)+' '+P.unit.name
-    +' <span style="color:var(--ink3)">(sample '+best.idx+')</span></div>'
-    +'<div class="trow focus"><span class="swatch" style="border-top-style:'+(best.t.dash?'dashed':'solid')+'; color:'+best.t.color+'"></span>'
-    +keyLabel(best.t.key)+' · '+esc(truncLabel(f,14))+'</div>'
-    +'<div class="trow">Γ (mag ∠ deg)<span class="val">'+SNP.fmtNum(mag,5)+' ∠ '+SNP.fmtNum(ang,5)+'°</span></div>'
-    +'<div class="trow">Γ (re, im)<span class="val">'+SNP.fmtNum(best.re,5)+', '+SNP.fmtNum(best.im,5)+'</span></div>';
-  if (pi===pj){
-    const z=SNP.gammaToZ(best.re,best.im,P.z0c);   // segs are chart-normalized; Z is invariant
-    h+= z ? '<div class="trow">Z into port '+pi+'<span class="val">'+SNP.fmtNum(z.r,5)+' + j('+SNP.fmtNum(z.x,5)+') Ω</span></div>'
-          : '<div class="trow">Z into port '+pi+'<span class="val">open (Γ→1)</span></div>';
+  // (2) the design overlay, over the points the RENDERER recorded as it drew them — so a
+  // hover can never report a step that is hidden, past the slideshow cursor, or failed
+  for (const h of (P.dpick||[])){
+    for (const sub of h.subs){
+      if (sub.length===1){
+        const a=sub[0], d2=(a[0]-mx)*(a[0]-mx)+(a[1]-my)*(a[1]-my);
+        if (d2<=R2) take({ kind:'design', h, re:a[2], im:a[3], X:a[0], Y:a[1], hx:a[0], hy:a[1], d2 });
+        continue;
+      }
+      for (let q=1;q<sub.length;q++){
+        const a=sub[q-1], b=sub[q];
+        if ((a[0]<mx-R&&b[0]<mx-R)||(a[0]>mx+R&&b[0]>mx+R)||(a[1]<my-R&&b[1]<my-R)||(a[1]>my+R&&b[1]>my+R)) continue;
+        const sn=segNear(a[0],a[1],b[0],b[1],mx,my);
+        if (sn.d2>R2) continue;
+        const k= sn.t<0.5? a : b;
+        take({ kind:'design', h, re:k[2], im:k[3], X:k[0], Y:k[1], hx:sn.x, hy:sn.y, d2:sn.d2 });
+      }
+    }
   }
-  if (P.z0c!==f.parsed.z0)
-    h+='<div class="trow">chart Z₀<span class="val">'+SNP.fmtNum(P.z0c,5)+' Ω <span style="color:var(--ink3)">(file: '+SNP.fmtNum(f.parsed.z0,5)+')</span></span></div>';
+  if (!best){ clearHover(); return; }
+  hoverFocus=best;
+
+  const col= best.kind==='trace'? best.t.color : best.h.st.color;
+  let mk='';
+  if (Math.hypot(best.hx-best.X, best.hy-best.Y)>6)   // the readout snapped: show from where
+    mk+='<line x1="'+best.hx+'" y1="'+best.hy+'" x2="'+best.X+'" y2="'+best.Y+'" stroke="'+col
+       +'" stroke-width="1" stroke-dasharray="2 3" opacity=".75"/>';
+  mk+='<circle cx="'+best.X+'" cy="'+best.Y+'" r="6" fill="none" stroke="'+col+'" stroke-width="2"/>'
+     +'<circle cx="'+best.X+'" cy="'+best.Y+'" r="2.6" fill="'+col+'"/>';
+  $('hoverG').innerHTML=mk;
+
+  const hov=state.smith.hover;
+  const rd=SNP.smithReadout(best.re, best.im, P.z0c);
+  let h;
+  if (best.kind==='trace'){
+    const f=best.t.f, pp=best.t.key.split(',');
+    h='<div class="tfreq">'+SNP.fmtNum(f.parsed.freqHz[best.idx]/P.unit.mult,6)+' '+P.unit.name
+      +' <span style="color:var(--ink3)">(sample '+best.idx+')</span></div>'
+      +'<div class="trow focus"><span class="swatch" style="border-top-style:'+(best.t.dash?'dashed':'solid')+'; color:'+best.t.color+'"></span>'
+      +keyLabel(best.t.key)+' · '+esc(truncLabel(f,14))+'</div>'
+      +smithTipRows(rd, hov, pp[0]===pp[1]);
+    if (P.z0c!==f.parsed.z0)
+      h+='<div class="trow">chart Z₀<span class="val">'+SNP.fmtNum(P.z0c,5)+' Ω <span style="color:var(--ink3)">(file: '+SNP.fmtNum(f.parsed.z0,5)+')</span></span></div>';
+  } else {
+    const st=best.h.st, v=(st.value||'').trim();
+    h='<div class="tfreq">'+esc(best.h.ch.name)+' <span style="color:var(--ink3)">· step '+(best.h.i+1)+' · '+st.kind
+      +(v?' '+esc(v):'')+'</span></div>'
+      +'<div class="trow focus"><span class="swatch" style="border-top-style:solid; color:'+st.color+'"></span>design path</div>'
+      +smithTipRows(rd, hov, true);
+  }
   placeTooltip(ev,h);
 }
+
 function clearHover(){
   hoverFocus=null;
   $('hoverG').innerHTML='';
@@ -2151,7 +2287,7 @@ function dragUp(ev){
     return;
   }
   // plain click: pin a marker on the focused trace (debounced so dblclick != 2 markers)
-  if (hoverFocus){
+  if (hoverFocus && hoverFocus.kind!=='design'){
     const hf=hoverFocus;
     clearTimeout(clickTimer);
     clickTimer=setTimeout(()=>{
@@ -3150,6 +3286,7 @@ function renderSmithPanel(){
   $('smZ0').value=sm.z0;
   $('smZGrid').checked=state.grid;
   $('smYGrid').checked=sm.showYGrid;
+  renderHoverChips(sm);
   $('smQ').value=sm.qList.join(', ');
   sm.active=Math.min(sm.active, sm.chains.length-1);
 
@@ -3364,6 +3501,32 @@ $('smZ0').addEventListener('keydown',ev=>{
   state.smith.z0=pv;
   renderPlot(); scheduleAutosave();
 });
+// hover-readout chips: one toggle per quantity, in the PURE vocabulary's own order
+const HOVER_LABEL={ gpolar:'Γ ∠', gri:'Γ re,im', rl:'RL dB', swr:'SWR', zn:'z', z:'Z Ω', yn:'y', y:'Y mS', q:'Q' };
+const HOVER_TITLE={
+  gpolar:'reflection coefficient, magnitude and angle',
+  gri:'reflection coefficient, real and imaginary parts',
+  rl:'return loss = -20·log10|Γ| (a transmission trace reads |S| in dB instead)',
+  swr:'standing-wave ratio (1+|Γ|)/(1-|Γ|)',
+  zn:'NORMALIZED impedance z = Z/Z₀ — what the chart grid reads',
+  z:'absolute impedance Z in ohms, at the chart Z₀',
+  yn:'NORMALIZED admittance y = Y/Y₀ = 1/z',
+  y:'absolute admittance Y in millisiemens, at the chart Z₀',
+  q:'Q = |X|/R of the impedance at this point',
+};
+function renderHoverChips(sm){
+  $('smHoverRow').innerHTML='<span style="color:var(--ink3)">hover readout</span>'
+    + SNP.SMITH_HOVER_KEYS.map(k=>'<button class="sbtn'+(sm.hover[k]?' on':'')+'" data-hov="'+k+'"'
+        +' title="'+esc(HOVER_TITLE[k])+'">'+HOVER_LABEL[k]+'</button>').join('');
+  $('smHoverRow').querySelectorAll('[data-hov]').forEach(b=>{
+    b.onclick=()=>{
+      const k=b.dataset.hov, hv=state.smith.hover;
+      hv[k]=!hv[k];
+      b.classList.toggle('on', hv[k]);              // the tooltip is built on hover: no re-render
+      scheduleAutosave();
+    };
+  });
+}
 $('smZGrid').addEventListener('change',()=>{
   state.grid=$('smZGrid').checked;          // one per-tab flag, two views of it
   $('gridChk').checked=state.grid;

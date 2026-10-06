@@ -798,5 +798,153 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
     /gl\.length\?\s*'grid labels: '/.test(rs));
 }
 
+// ---------- 36. smith hover readout: every quantity of a point on the chart ----------
+{
+  const R = SNP.smithReadout;
+  // independent complex division for the oracle
+  const cdiv = (a, b, c, d) => { const den = c * c + d * d; return [(a * c + b * d) / den, (b * c - a * d) / den]; };
+
+  const m = R(0, 0, 50);
+  check('matched point: z = Z0, y = 1/Z0, SWR 1, Q 0',
+    m.zn.r === 1 && m.zn.x === 0 && m.z.r === 50 && m.z.x === 0
+    && approx(m.yn.g, 1) && approx(m.y.g, 0.02) && m.swr === 1 && m.q === 0);
+  check('matched point: |G| = 0 is infinite return loss', m.db === -Infinity && m.mag === 0);
+
+  const h = R(0.5, 0, 50);
+  check('G=0.5: z = 3, Z = 150, y = 1/3, SWR = 3',
+    approx(h.zn.r, 3) && approx(h.z.r, 150) && approx(h.yn.g, 1 / 3)
+    && approx(h.y.g, 1 / 150) && approx(h.swr, 3));
+  check('G=0.5: return loss is -db = 6.0206 dB', approx(-h.db, 6.020599913279624, 1e-9));
+
+  // G = j sits ON the unit circle: z = j (pure reactance) -> R = 0, Q infinite, SWR infinite
+  const j = R(0, 1, 50);
+  check('G=j: z = j1 exactly', Math.abs(j.zn.r) < 1e-12 && approx(j.zn.x, 1) && approx(j.z.x, 50));
+  check('G=j: Q is infinite (no resistance), SWR is infinite', j.q === Infinity && j.swr === Infinity);
+
+  const op = R(1, 0, 50);
+  check('OPEN (G=+1): z is null, y is exactly 0',
+    op.zn === null && op.z === null && op.yn.g === 0 && op.yn.b === 0 && op.y.g === 0);
+  const sh = R(-1, 0, 50);
+  check('SHORT (G=-1): z is exactly 0, y is null',
+    sh.zn.r === 0 && sh.zn.x === 0 && sh.yn === null && sh.y === null && sh.q === 0);
+
+  const act = R(1.5, 0, 50);
+  check('|G|>1 (negative resistance): no Q, SWR infinite, gain in dB',
+    act.q === null && act.zn.r < 0 && act.swr === Infinity && act.db > 0);
+
+  // fuzz against independent arithmetic + the invariants that tie the four quantities
+  let worst = 0, bad = null;
+  for (let k = 0; k < 400; k++) {
+    const ang = k * 0.9173, rad = 0.02 + (k % 97) / 100;
+    const re = rad * Math.cos(ang), im = rad * Math.sin(ang), z0 = 20 + (k % 7) * 15;
+    const r = R(re, im, z0);
+    const [zr, zx] = cdiv(1 + re, im, 1 - re, -im);
+    const [yg, yb] = cdiv(1 - re, -im, 1 + re, im);
+    const d = Math.max(Math.abs(r.zn.r - zr), Math.abs(r.zn.x - zx),
+      Math.abs(r.yn.g - yg), Math.abs(r.yn.b - yb),
+      Math.abs(r.z.r - zr * z0), Math.abs(r.z.x - zx * z0),
+      Math.abs(r.y.g - yg / z0), Math.abs(r.y.b - yb / z0));
+    // y*z = 1: the two halves are one Mobius, so they can never disagree
+    const pr = r.zn.r * r.yn.g - r.zn.x * r.yn.b, pi2 = r.zn.r * r.yn.b + r.zn.x * r.yn.g;
+    const dd = Math.max(d, Math.abs(pr - 1), Math.abs(pi2));
+    if (dd > worst) { worst = dd; bad = { re, im, z0 }; }
+  }
+  check('400 points match independent complex arithmetic and y*z = 1', worst < 1e-10,
+    'worst ' + worst + ' at ' + JSON.stringify(bad));
+
+  // A LOSSLESS point is THE Smith-chart case (a short, an open, any stub): the complex
+  // division leaves R = +-1e-15 there, and reporting that is a negative resistance, a
+  // random Q and an SWR of 1.8e16 -- noise with five significant digits on it.
+  {
+    let worstR = 0, qBad = 0, swrBad = 0;
+    for (let deg = 0; deg < 360; deg += 1) {
+      const a = deg * Math.PI / 180, r = R(Math.cos(a), Math.sin(a), 50);
+      if (r.zn === null) continue;                       // deg 0 is the open: no z at all
+      worstR = Math.max(worstR, Math.abs(r.zn.r));
+      if (r.q !== (r.zn.x === 0 ? 0 : Infinity)) qBad++;
+      if (r.swr !== Infinity) swrBad++;
+    }
+    check('every point on the unit circle reads R = 0 exactly', worstR === 0, 'worst |R| ' + worstR);
+    check('...with the infinite Q and SWR that go with it', qBad === 0 && swrBad === 0,
+      'q wrong on ' + qBad + ', swr wrong on ' + swrBad);
+  }
+  // ...and the floor must not eat a resistance a measurement could actually resolve
+  const negR = R(...(g => [g.re, g.im])(SNP.gammaOfZ(-0.001, 50, 50)), 50);
+  check('a REAL negative resistance (-1 mOhm) is not rounded away', approx(negR.zn.r, -0.00002) && negR.q === null);
+  const hiQ = R(...(g => [g.re, g.im])(SNP.gammaOfZ(0.0001, 50, 50)), 50);
+  check('a Q of 500000 survives the floor exactly', approx(hiQ.q, 5e5, 1e-6));
+
+  // the vocabulary the UI builds its chips from
+  check('hover vocabulary is the 9 documented quantities',
+    JSON.stringify(SNP.SMITH_HOVER_KEYS) === JSON.stringify(['gpolar', 'gri', 'rl', 'swr', 'zn', 'z', 'yn', 'y', 'q']));
+  const d0 = SNP.sanSmith(null).hover;
+  check('an old project with no hover map gets the defaults, not an empty tooltip',
+    d0.gpolar === true && d0.gri === true && d0.zn === true && d0.z === true
+    && d0.yn === false && d0.y === false && d0.swr === false && d0.rl === false && d0.q === false);
+  const d1 = SNP.sanSmith({ hover: { zn: 1, gpolar: 0, bogus: true } }).hover;
+  check('an explicit hover map is coerced to booleans, unknown keys dropped',
+    d1.zn === true && d1.gpolar === false && !('bogus' in d1)
+    && Object.keys(d1).length === SNP.SMITH_HOVER_KEYS.length);
+  check('a key the map does not mention keeps its default', d1.gri === true && d1.z === true);
+  const dPart = SNP.sanSmith({ hover: { zn: false, bogus: 1 } }).hover;
+  check('a quantity this version adds reaches an older project as its DEFAULT, not as false',
+    dPart.zn === false && dPart.gpolar === true && dPart.gri === true && dPart.z === true
+    && dPart.q === false);
+  const sm1 = SNP.sanSmith({ hover: { y: true, q: true } });
+  check('hover survives the sanitizer round trip', JSON.stringify(SNP.sanSmith(sm1)) === JSON.stringify(sm1));
+}
+
+// ---------- 37. smith hover: wiring (source-level, the call sites) ----------
+{
+  const has = (re, what) => check(what, re.test(html), 'not found in index.html');
+  const sh = html.slice(html.indexOf('function smithHover(ev,mx,my){'), html.indexOf('function clearHover(){'));
+  // the hit test is against the DRAWN CURVE, not only its vertices — hovering between two
+  // samples is the common case on a Smith locus and used to find nothing
+  // pin the CALL SITES, both of them: a helper can be present while a loop keeps
+  // measuring to its vertices (which is exactly the bug this replaced)
+  check('the trace loop measures to the polyline SEGMENTS',
+    /const sn=segNear\(pX,pY,cX,cY,mx,my\);/.test(sh));
+  check('the design loop measures to the polyline SEGMENTS',
+    /const sn=segNear\(a\[0\],a\[1\],b\[0\],b\[1\],mx,my\);/.test(sh));
+  check('the readout still snaps to a real sample', /sn\.t<0\.5\? q-1 : q/.test(sh));
+  check('the hit radius is a screen-px constant', /const R=HOVER_PX/.test(sh) && /const HOVER_PX=\d+;/.test(html));
+  // the design overlay is hit-tested against what the RENDERER recorded while drawing it,
+  // so a hidden / cursor-limited / failed step can never be reported
+  check('smithHover reads the renderer-recorded design geometry', /P\.dpick/.test(sh));
+  check('renderSmith fills P.dpick as it draws', /P\.dpick=dpick;/.test(html) && /pathD\(rec\.pathAbs, hit\)/.test(html));
+  check('a pen-up starts a new hover subpath (no segment across a pole)',
+    /if \(!q\)\{ pen=false; sub=null; continue; \}/.test(html));
+  // only a measured sample can be pinned: a design point has no file, key or sample index
+  has(/if \(hoverFocus && hoverFocus\.kind!=='design'\)\{/, 'the click-to-pin path excludes design hits');
+  // a design-only session has no traces and still has something to read out
+  check('onHover no longer requires a loaded trace', /function onHover\(ev\)\{\s*\n\s*if \(!P\)\{ return; \}/.test(html));
+  // the tooltip rows come from the ONE pure readout, through the persisted setting
+  check('the tooltip is built from SNP.smithReadout and the hover setting',
+    /const rd=SNP\.smithReadout\(best\.re, best\.im, P\.z0c\);/.test(sh) && /const hov=state\.smith\.hover;/.test(sh));
+  check('impedance-like rows are withheld on a transmission trace',
+    /smithTipRows\(rd, hov, pp\[0\]===pp\[1\]\)/.test(sh)
+    && /reflection traces only/.test(html));
+  // the settings chips: one per vocabulary entry, writing the per-tab smith state
+  has(/id="smHoverRow"/, 'the Smith panel has a hover-readout row');
+  has(/SNP\.SMITH_HOVER_KEYS\.map\(k=>/, 'the chips are generated from the PURE vocabulary');
+  has(/const k=b\.dataset\.hov, hv=state\.smith\.hover;[\s\S]{0,220}?scheduleAutosave\(\)/,
+    'toggling a chip writes state.smith.hover and persists it');
+  check('renderSmithPanel re-syncs the chips from state', /renderHoverChips\(sm\);/.test(html));
+  // the chip label/tooltip maps are a SECOND copy of the vocabulary: a key missing from
+  // either renders an "undefined" chip, so they are pinned against the PURE list
+  // each slice is bounded to its OWN literal: an unbounded one finds the key in the
+  // other map and passes over a chip that would render "undefined"
+  const litAfter = (name) => {
+    const a0 = html.indexOf(name);
+    return html.slice(a0, html.indexOf('};', a0));
+  };
+  const labLit = litAfter('const HOVER_LABEL='), titLit = litAfter('const HOVER_TITLE=');
+  for (const k of SNP.SMITH_HOVER_KEYS){
+    check('chip "' + k + '" has a label and a tooltip',
+      new RegExp('[{,]\\s*' + k + ":'").test(labLit)
+      && new RegExp('[{,]\\s*\\n?\\s*' + k + ":'").test(titLit));
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);
