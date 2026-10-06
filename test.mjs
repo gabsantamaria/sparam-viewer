@@ -954,5 +954,103 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   }
 }
 
+// ---------- 38. the hover tooltip and the hit math, RUN (not grepped) ----------
+// Section 37 pins that smithTipRows is CALLED. That is not enough: measured, every one of
+// these single-token mutations left the suite green — `if (hov.gpolar)` -> `if (true)` (the
+// whole setting dead), `if (zOk){` -> `if (true){` (impedance rows on a transmission trace),
+// the mS scale dropped (siemens printed under an mS label), the return-loss sign flipped,
+// the open/short labels swapped, and `if (sn.d2<=R2)` widened 20x. Both helpers are DOM-free,
+// so they are LIFTED out of the shipped file the same way the PURE block is — the exact code
+// that ships is the code under test, never a twin.
+{
+  const lift = (from, to) => html.slice(html.indexOf(from), html.indexOf(to));
+  const UI = new Function('SNP',
+    lift('function segNear(', '// the quantity rows')
+    + lift('function smithTipRows(', 'function smithHover(')
+    + '\nreturn { segNear, smithTipRows };')(SNP);
+  const { segNear, smithTipRows } = UI;
+  const ALL = {}, NONE = {};
+  for (const k of SNP.SMITH_HOVER_KEYS) { ALL[k] = true; NONE[k] = false; }
+  const rows = h => (h.match(/<div class="trow"/g) || []).length;
+  const text = h => h.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Z = 30 - j40 at 50 ohm  ->  y = 1/z = 0.012 + j0.016 S = 12 + j16 mS
+  const rd = SNP.smithReadout(...(g => [g.re, g.im])(SNP.gammaOfZ(30, -40, 50)), 50);
+  check('every quantity switched ON prints exactly its 9 rows', rows(smithTipRows(rd, ALL, true)) === 9);
+  check('every quantity switched OFF prints nothing at all', smithTipRows(rd, NONE, true) === '');
+  for (const k of SNP.SMITH_HOVER_KEYS) {
+    const one = { ...NONE, [k]: true };
+    check('the "' + k + '" chip controls exactly one row', rows(smithTipRows(rd, one, true)) === 1);
+  }
+  const all = text(smithTipRows(rd, ALL, true));
+  check('the Z row is the absolute impedance in ohms', /Z 30 \+ j\(-40\) Ω/.test(all), all);
+  check('the z row is normalized by the chart Z0', /z = Z\/Z₀ 0\.6 \+ j\(-0\.8\)/.test(all), all);
+  check('the Y row is MILLIsiemens, not siemens', /Y 12 \+ j\(16\) mS/.test(all), all);
+  check('the y row is normalized admittance', /y = Y\/Y₀ 0\.6 \+ j\(0\.8\)/.test(all), all);
+  check('return loss is POSITIVE for a passive reflection', /return loss 6\.0206 dB/.test(all), all);
+  check('SWR reads the standing-wave ratio', /SWR 3 /.test(all), all);
+  check('Q is |X|/R of the normalized impedance', /Q = \|X\|\/R 1\.333/.test(all), all);
+
+  // a TRANSMISSION trace: every impedance-like quantity is meaningless there
+  const tx = text(smithTipRows(rd, ALL, false));
+  const txRows = tx.slice(0, tx.indexOf('reflection traces only') + 1 || undefined);
+  check('a transmission trace is given no impedance-like row',
+    !/z = |Z 30|y = |Y 12|SWR |Q = /.test(txRows.replace(/z · Z · y · Y · SWR · Q:.*/, '')), tx);
+  check('...and is told why, rather than silently given less', /reflection traces only/.test(tx), tx);
+  check('...and its dB row reads |S|, with the opposite sign of return loss',
+    /\|S\| -6\.0206 dB/.test(tx), tx);
+  check('the note is withheld when no impedance-like quantity was asked for',
+    !/reflection traces only/.test(smithTipRows(rd, { ...NONE, gpolar: true }, false)));
+
+  // the two poles must not swap: an OPEN has no impedance, a SHORT has no admittance
+  const op = text(smithTipRows(SNP.smithReadout(1, 0, 50), ALL, true));
+  check('an OPEN says open on z and Z', (op.match(/open \(Γ→1\)/g) || []).length === 2, op);
+  check('...and still reports its exactly-zero admittance', /Y 0 \+ j\(0\) mS/.test(op), op);
+  const sc = text(smithTipRows(SNP.smithReadout(-1, 0, 50), ALL, true));
+  check('a SHORT says short on y and Y', (sc.match(/short \(Γ→−1\)/g) || []).length === 2, sc);
+  check('...and still reports its exactly-zero impedance', /Z 0 \+ j\(0\) Ω/.test(sc), sc);
+  // one glyph may not mean two things
+  const react = text(smithTipRows(SNP.smithReadout(0, 1, 50), { ...NONE, q: true }, true));
+  check('a pure reactance reads an infinite Q', /Q = \|X\|\/R ∞/.test(react), react);
+  const act = text(smithTipRows(SNP.smithReadout(1.5, 0, 50), { ...NONE, q: true }, true));
+  check('an ACTIVE device says its R is negative, not a bare dash', /none \(negative R\)/.test(act), act);
+
+  // segNear: the hit radius IS this function's answer
+  const d = (a, b, c, e, x, y) => Math.sqrt(segNear(a, b, c, e, x, y).d2);
+  check('a point beside the middle of a segment measures the PERPENDICULAR distance',
+    approx(d(0, 0, 100, 0, 50, 7), 7) && approx(segNear(0, 0, 100, 0, 50, 7).t, 0.5));
+  check('past an end, the distance is to the ENDPOINT (t clamps)',
+    approx(d(0, 0, 100, 0, -30, 40), 50) && segNear(0, 0, 100, 0, -30, 40).t === 0
+    && approx(d(0, 0, 100, 0, 140, 30), 50) && segNear(0, 0, 100, 0, 140, 30).t === 1);
+  check('the nearest point lies ON the segment', (() => {
+    const s2 = segNear(10, 10, 60, 90, 70, 20);
+    return s2.t >= 0 && s2.t <= 1 && approx(s2.x, 10 + s2.t * 50) && approx(s2.y, 10 + s2.t * 80);
+  })());
+  check('a zero-length segment degrades to the point distance',
+    approx(d(5, 5, 5, 5, 5, 12), 7) && segNear(5, 5, 5, 5, 5, 12).t === 0);
+  check('a diagonal segment measures the true perpendicular, not a bbox',
+    approx(d(0, 0, 100, 100, 50, 0), 50 / Math.SQRT2));
+}
+
+// ---------- 39. where the hover ring is DRAWN ----------
+{
+  const sh = html.slice(html.indexOf('function smithHover(ev,mx,my){'), html.indexOf('function clearHover(){'));
+  // the ring marks the SAMPLE (best.X/best.Y), never the cursor's point on the curve —
+  // that is the whole claim of "snaps to real data samples"
+  check('the ring is drawn at the snapped sample',
+    /<circle cx="'\+best\.X\+'" cy="'\+best\.Y\+'" r="6"/.test(sh));
+  // ...and the connector runs FROM the point on the curve TO it, so the snap is visible
+  check('the connector runs from the curve point to the sample',
+    /x1="'\+best\.hx\+'" y1="'\+best\.hy\+'" x2="'\+best\.X\+'" y2="'\+best\.Y\+'"/.test(sh));
+  check('the connector is drawn only when the snap actually moved the marker',
+    /if \(Math\.hypot\(best\.hx-best\.X, best\.hy-best\.Y\)>6\)/.test(sh));
+  // nearest wins, over BOTH sources: the comparison is strict-less on squared distance
+  check('the nearest candidate wins', /const take=c=>\{ if \(!best \|\| c\.d2<best\.d2\) best=c; \};/.test(sh));
+  check('both the trace loop and the design loop go through it',
+    (sh.match(/take\(\{/g) || []).length === 4);
+  check('the marker takes the colour of what it marks',
+    /const col= best\.kind==='trace'\? best\.t\.color : best\.h\.st\.color;/.test(sh));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);

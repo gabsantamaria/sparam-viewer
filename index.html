@@ -2116,7 +2116,8 @@ function smithTipRows(rd, hov, zOk){
     if (hov.z)   h+=row('Z', rd.z? cx(rd.z.r, rd.z.x, 'Ω') : 'open (Γ→1)');
     if (hov.yn)  h+=row('y = Y/Y₀', rd.yn? cx(rd.yn.g, rd.yn.b) : 'short (Γ→−1)');
     if (hov.y)   h+=row('Y', rd.y? cx(rd.y.g*1e3, rd.y.b*1e3, 'mS') : 'short (Γ→−1)');
-    if (hov.q)   h+=row('Q = |X|/R', rd.q===null? '—' : (rd.q===Infinity? '∞' : SNP.fmtNum(rd.q,4)));
+    if (hov.q)   h+=row('Q = |X|/R', rd.q===null? (rd.zn? 'none (negative R)' : '—')
+                                   : (rd.q===Infinity? '∞' : SNP.fmtNum(rd.q,4)));
   } else if (hov.swr||hov.zn||hov.z||hov.yn||hov.y||hov.q){
     h+='<div class="trow" style="color:var(--ink3)">z · Z · y · Y · SWR · Q: reflection traces only</div>';
   }
