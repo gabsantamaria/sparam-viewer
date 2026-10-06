@@ -908,6 +908,14 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
     /const sn=segNear\(a\[0\],a\[1\],b\[0\],b\[1\],mx,my\);/.test(sh));
   check('the readout still snaps to a real sample', /sn\.t<0\.5\? q-1 : q/.test(sh));
   check('the hit radius is a screen-px constant', /const R=HOVER_PX/.test(sh) && /const HOVER_PX=\d+;/.test(html));
+  // 36 px is what the old VERTEX test used: measuring to the CURVE at the same radius can
+  // only gain reach on a sparse locus, so no hover that worked before stops working
+  check('the hit radius is not narrower than the vertex test it replaced',
+    +(/const HOVER_PX=(\d+);/.exec(html)||[])[1] >= 36);
+  // the readout snaps to a sample that may sit off-plot: the marker is clipped like every
+  // other drawn layer, so it is never painted outside the frame
+  check('the hover marker is clipped to the plot rect',
+    /<g id="hoverG" clip-path="url\(#clip\)"><\/g>/.test(html));
   // the design overlay is hit-tested against what the RENDERER recorded while drawing it,
   // so a hidden / cursor-limited / failed step can never be reported
   check('smithHover reads the renderer-recorded design geometry', /P\.dpick/.test(sh));

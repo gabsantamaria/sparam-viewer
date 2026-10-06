@@ -383,7 +383,7 @@
       <g id="pathsG" clip-path="url(#clip)"></g>
       <g id="designG" clip-path="url(#clip)" pointer-events="none"></g>
       <g id="markersG"></g>
-      <g id="hoverG"></g>
+      <g id="hoverG" clip-path="url(#clip)"></g>
       <rect id="bandRect" fill="rgba(59,130,246,.13)" stroke="#3b82f6" stroke-width="1" visibility="hidden"/>
       <rect id="overlay" fill="transparent"/>
       <!-- legend AFTER the overlay: a transparent fill is a painted hit target,
@@ -2086,7 +2086,9 @@ function onHover(ev){
   if (rows.length>10) h+='<div class="trow" style="color:var(--ink3)">… '+(rows.length-10)+' more</div>';
   placeTooltip(ev,h);
 }
-const HOVER_PX=20;                                   // "on the curve", in SCREEN px at any zoom
+const HOVER_PX=36;                                   // the radius the old VERTEX test used:
+// measuring to the CURVE instead can only gain reach on a sparse locus, never lose it on a
+// dense one, so no hover that worked before stops working
 // nearest point of segment AB to M; t clamps to [0,1], so an endpoint wins past the ends
 function segNear(ax,ay,bx,by,mx,my){
   const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
