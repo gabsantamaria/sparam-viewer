@@ -465,8 +465,11 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   const v2b = ['[Version] 2.0', '# GHz S RI R 50', '[Number of Ports] 2', '[Two-Port Data Order] 21_12',
     '[Reference] 50 75', '[Network Data]', '1 .1 0 .9 0 .5 0 .1 0', '[End]'].join('\n') + '\n';
   const pb = SNP.parseTouchstone('r.s2p', v2b);
-  check('per-port [Reference] takes first + WARNS', pb.ok && pb.z0 === 50 &&
-    pb.warnings.some(w => /per-port|impedances/.test(w)), pb.ok ? pb.warnings.join(';') : pb.error);
+  // one reference per file: reading port 2 of a 50/75 file at 50 mislabels S21/S12/S22 — refused,
+  // exactly like differing "! Port Impedance" records
+  check('per-port [Reference] with DIFFERENT values is refused', !pb.ok && /\[Reference\].*different/.test(pb.error), pb.ok ? 'loaded at '+pb.z0 : pb.error);
+  const pbe = SNP.parseTouchstone('r.s2p', v2b.replace('[Reference] 50 75', '[Reference] 75 75'));
+  check('per-port [Reference] with EQUAL values loads at that value', pbe.ok && pbe.z0 === 75, pbe.ok ? String(pbe.z0) : pbe.error);
   const v2c = v2.replace('[Reference]\n75\n', '');
   const pc = SNP.parseTouchstone('r.s1p', v2c);
   check('no [Reference] -> option-line R stands', pc.ok && pc.z0 === 50);
@@ -1208,6 +1211,138 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
   const kept = SNP.sanSmith({ chains: [{ name: 'a', steps: [], circ: { f0: 2.5e9, fmt: 'smith', ref2: 'z0' } }] }).chains[0].circ;
   check('wiring: the list keeps its circuit settings', kept && kept.f0 === 2.5e9 && kept.fmt === 'smith' && kept.ref2 === 'z0');
   check('wiring: a list that never opened the window carries no settings', !('circ' in SNP.sanSmith({ chains: [{ name: 'a', steps: [] }] }).chains[0]));
+}
+
+// ---------- 44. circuit window: the review's regressions ----------
+{
+  const st = (o) => ({ q: 'z', norm: true, value: '', z0line: 50, eleDeg: 45, swr: false, z0new: 50, color: '#e11d48', op: 1, hide: false, hl: false, ...o });
+  // S12 must be S21 EXACTLY: AD-BC evaluated from the cascade cancels in a deep stopband
+  const ladder = [st({ kind: 'start', value: '1' })];
+  for (let i = 0; i < 4; i++) ladder.push(st({ kind: 'shunt', q: 'y', value: 'j1.5' }), st({ kind: 'series', value: 'j1.2' }));
+  for (const ref2 of ['load', 'z0']) {
+    const r = SNP.circuitSolve(ladder, 50, { f0: 1e9, fStart: 1e6, fStop: 100e9, n: 1001, log: true, ref2 });
+    let same = r.ok;
+    for (let k = 0; k < r.freqHz.length && same; k++)
+      if (!Object.is(r.res.S['1,2'].re[k], r.res.S['2,1'].re[k]) || !Object.is(r.res.S['1,2'].im[k], r.res.S['2,1'].im[k])) same = false;
+    check('circuit: S12 is S21 bit-for-bit across a deep stopband (' + ref2 + ')', same);
+  }
+  // a load that cannot be built never crashes the schematic, and the drawing says so
+  const bad = [[[st({ kind: 'start', value: '-0.5+j1' })], 'sRC'], [[st({ kind: 'start', value: 'j1' })], 'sRC'],
+    [[st({ kind: 'start', value: '-j1' })], 'pRC'], [[st({ kind: 'start', value: '1' })], 'pRL']];
+  for (const [steps, topo] of bad) {
+    const r = SNP.circuitSolve(steps, 50, { f0: 1e9, loadTopo: topo });
+    let svg = '', err = null;
+    const model = { name: 'x', f0Hz: 1e9, z1: r.z1, elements: r.circuit.elements, load: r.load, loadStep: 0, loadErr: r.loadErr, ref2: 'load' };
+    try { svg = SNP.circuitSchematicSvg(model).svg; } catch (e) { err = e; }
+    check('schematic: a failed load fit (' + steps[0].value + ', ' + topo + ') draws, and says so', !err && r.loadErr && svg.includes('load: ✗'), err ? String(err) : r.loadErr);
+  }
+  // a load record with no values at all (no loadErr passed) must not crash the drawing either
+  let crash = null, svg0 = '';
+  try { svg0 = SNP.circuitSchematicSvg({ name: 'x', f0Hz: 1e9, z1: 50, elements: [], load: { topo: 'sRC', R: null, C: null, L: null }, loadStep: 0, ref2: 'load' }).svg; } catch (e) { crash = e; }
+  check('schematic: a load with no values draws, and says so', !crash && svg0.includes('load: ✗ no values'), crash ? String(crash) : '');
+  check('load check: an empty R is not 0 Ω', SNP.circLoadCheck({ topo: 'sRL', R: null, L: 1e-9 }) !== null);
+  check('sanCirc: an inherited name is not a unit', SNP.sanCirc({ unit: 'constructor' }).unit === 'GHz' && SNP.sanCirc({ unit: '__proto__' }).unit === 'GHz');
+  check('sanCirc: an edited load needs a topology', SNP.sanCirc({ loadAuto: false }).loadAuto === true && SNP.sanCirc({ loadAuto: false, loadTopo: 'sRL' }).loadAuto === false);
+  // near an open the f0 check compares in Gamma: here |Z_in| ~ 5e9 Ω and Z itself carries
+  // 2e-8 of relative rounding on both sides, while Gamma agrees to 4e-16
+  const op = SNP.circuitSolve([st({ kind: 'start', q: 'y', value: '1e-8+j2.7' }), st({ kind: 'shunt', q: 'y', value: '1e-12-j2.7' })], 50, { f0: 1e9, n: 3 });
+  check('f0 check: holds for a near-open point', op.ok && op.f0Check && op.f0Check.ok && op.f0Check.dz / Math.hypot(op.circuit.zIn0.re, op.circuit.zIn0.im) > 1e-9, JSON.stringify(op.f0Check));
+  // schematic geometry
+  const lm = SNP.circuitSolve([st({ kind: 'start', value: '2' }), st({ kind: 'shunt', q: 'y', value: 'j0.5' }), st({ kind: 'series', value: 'j1' })], 50, { f0: 1e9 });
+  const mk = (o) => ({ name: 'n', f0Hz: 1e9, z1: lm.z1, elements: lm.circuit.elements, load: lm.load, loadStep: 0, ref2: 'load', ...o });
+  const sv = SNP.circuitSchematicSvg(mk({})).svg;
+  check('schematic: hover boxes are fill="none" (never the non-SVG "transparent")', !/fill="transparent"/.test(sv) && /pointer-events="all"/.test(sv));
+  const W = +/width="(\d+)"/.exec(sv)[1];
+  check('schematic: wide enough for the footnote', W >= 10 + 'values defined at f₀ · L/C from the reactance at f₀ · lines TEM, lossless, θ ∝ f · drawn port 1 → load'.length * 9.5 * 0.62);
+  const firstRail = /<line x1="48" y1="86" x2="(\d+)" y2="86"/.exec(sv);
+  check('schematic: the first element starts clear of the port-1 labels', firstRail && +firstRail[1] >= 10 + 'Z₀ = 50 Ω'.length * 10.5 * 0.62, firstRail && firstRail[1]);
+  check('schematic: an edited load is not called the start point', /edited — not the start point/.test(SNP.circuitSchematicSvg(mk({ loadEdited: true, loadStep: null })).svg) && !/#1 start/.test(SNP.circuitSchematicSvg(mk({ loadEdited: true, loadStep: null })).svg));
+  check('schematic: control characters never reach the XML', !/[\u0000-\u0008]/.test(SNP.circuitSchematicSvg(mk({ name: 'a\u0000b' })).svg));
+  // parser: wrapped HFSS records, record lengths, descriptive text, wording
+  const row6 = '1 ' + Array.from({ length: 72 }, (_, i) => (i % 2 ? 0 : 0.1)).join(' ');
+  const wrap = (p5) => '# GHz S RI R 50\n' + row6 + '\n! Port Impedance 50 0 50 0 50 0 50 0\n!   ' + p5 + ' 0 50 0\n';
+  check('parser: a wrapped Port Impedance record is read to the end (port 5 mismatch refused)', !SNP.parseTouchstone('w.s6p', wrap('48.2')).ok);
+  check('parser: a wrapped record that agrees loads', SNP.parseTouchstone('w.s6p', wrap('50')).ok);
+  const short = SNP.parseTouchstone('w.s2p', '# GHz S RI R 50\n1 0.1 0 0.9 0 0.9 0 0.1 0\n! Port Impedance 50 0\n');
+  check('parser: a record with the wrong number of values is refused', !short.ok && /2 values/.test(short.error), short.error);
+  const desc = SNP.parseTouchstone('w.s2p', '! Port Impedance: see the setup notes\n# GHz S RI R 50\n1 0.1 0 0.9 0 0.9 0 0.1 0\n');
+  check('parser: descriptive "Port Impedance" text is not a record', desc.ok && desc.warnings.some(w => /not a list of numbers/.test(w)), desc.error);
+  const noR = SNP.parseTouchstone('w.s2p', '# GHz S RI\n1 0.1 0 0.9 0 0.9 0 0.1 0\n! Port Impedance 75 0 75 0\n');
+  check('parser: with no R the refusal names the Touchstone default, not the option line', !noR.ok && /gives no R/.test(noR.error), noR.error);
+  // UI call sites (the window is DOM code; pin what the fixes rely on)
+  check('ui: the port-1 Z0 field is filled from the saved setting', /setVal\('ckZ1', c\.z1!=null\? ckNum\(c\.z1\) : '', force\)/.test(html));
+  check('ui: every refresh re-fills the sweep and load fields', /fillFreq\(false\);[^\n]*\n\s*fillLoad\(false\);/.test(html));
+  check('ui: a refilled field loses its red mark', /el\.value=v; el\.classList\.remove\('bad'\);/.test(html));
+  check('ui: the plot redraws on resize', /new ResizeObserver\(\(\)=>\{ if \(document\.body\.contains\(plotEl\)\) drawPlot\(\); else ro\.disconnect\(\); \}\)/.test(html));
+  check('ui: undrawable dB samples are announced', /lie below the plotted window/.test(html) && /0 exactly \(−∞ dB\)/.test(html));
+  check('ui: a log axis falls back to denser ticks', /if \(xt\.length<3\) xt=logTicks\(\[1,2,3,4,5,6,7,8,9\]\);/.test(html));
+  check('ui: all four downloads fall back to the clipboard', (html.match(/ckSave\(base\+'_/g) || []).length === 4 && /copyOnFail/.test(html));
+  check('ui: the network .s2p must read back bit-exactly', /back\.z0===res\.z1/.test(html) && /back\.S\[key\]\.re\[k\]!==net\.S\[key\]\.re\[k\]/.test(html));
+  check('ui: the page behind a dialog is inert', /function openModal\(html, cls\)\{[^\n]*modalInert\(true\); \}/.test(html) && /function closeModal\(\)\{[^\n]*modalInert\(false\); \}/.test(html));
+  check('ui: toasts sit above dialogs, outside the inert page', /document\.body\.appendChild\(\$\('toasts'\)\);/.test(html) && /#toasts\{ position:fixed;[^}]*z-index:70;/.test(html));
+  check('project: a refused file is skipped and named, not the whole project', /refused\.push\(pf\.name/.test(html) && /were NOT loaded \(the rest was\)/.test(html) && !/project load aborted/.test(html));
+  check('restore: an unreadable autosave is kept, not deleted', /idbPut\('autosave_unrestored', raw\)/.test(html));
+  check('names: list names carry no control characters', SNP.sanSmith({ chains: [{ name: 'a\nb\u0000c', steps: [] }] }).chains[0].name === 'a b c');
+}
+
+// ---------- 45. the scikit-rf script, RUN (skipped without python3 + scikit-rf) ----------
+{
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const probe = spawnSync('python3', ['-c', 'import skrf, numpy, matplotlib'], { encoding: 'utf8' });
+  if (probe.status !== 0) console.log('  (section 45 skipped: python3 with scikit-rf, numpy and matplotlib not found)');
+  else {
+    const st = (o) => ({ q: 'z', norm: true, value: '', z0line: 50, eleDeg: 45, swr: false, z0new: 50, color: '#e11d48', op: 1, hide: false, hl: false, ...o });
+    const cases = [
+      ['lmatch', [st({ kind: 'start', value: '2-j1' }), st({ kind: 'line', z0line: 75, eleDeg: 30 }), st({ kind: 'shunt', q: 'y', value: 'j0.5' }), st({ kind: 'series', value: 'j1' })], { loadTopo: 'pRC' }],
+      ['lossy', [st({ kind: 'start', value: '0.4+j0.7' }), st({ kind: 'series', q: 'y', value: '0.3-j0.8' }), st({ kind: 'shunt', q: 'z', value: '0.2+j1.1' }), st({ kind: 'line', z0line: 30, eleDeg: 180 })], { log: true, fStart: 1e8, fStop: 1e10 }],
+      ['series_only', [st({ kind: 'start', value: '1-j2' }), st({ kind: 'series', value: 'j0.7' }), st({ kind: 'series', value: '-j0.2' })], { ref2: 'z0' }],
+      ['zero_R_load', [st({ kind: 'start', value: '-j1' }), st({ kind: 'series', value: 'j0.5' })], {}],
+      ['empty', [st({ kind: 'start', value: '0.5+j0.5' })], { loadTopo: 'sRL' }],
+    ];
+    const dir = mkdtempSync(join(tmpdir(), 'skrf-'));
+    const meta = [];
+    for (const [nm, steps, cfg] of cases) {
+      const r = SNP.circuitSolve(steps, 50, { f0: 2e9, n: 41, ...cfg });
+      if (!r.ok) { check('script case ' + nm + ' solves', false, r.error); continue; }
+      const name = nm === 'lmatch' ? '_match v1.2' : nm;
+      const model = { name, f0Hz: r.cfg.f0, z1: r.z1, unit: 'GHz', elements: r.circuit.elements, load: r.load, loadStep: r.circuit.start, loadEdited: false, ref2: r.cfg.ref2, show: r.cfg.show, sweep: r.sweep };
+      writeFileSync(join(dir, nm + '.py'), SNP.circuitSkrfScript(model));
+      writeFileSync(join(dir, nm + '.json'), JSON.stringify({ S: Object.fromEntries(Object.entries(r.res.S).map(([k, v]) => [k, [[...v.re], [...v.im]]])) }));
+      meta.push(nm);
+    }
+    const runner = `
+import json, os, runpy, sys, warnings, numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.show = lambda *a, **k: None
+os.chdir(sys.argv[1]); out = {}
+for nm in sys.argv[2:]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        g = runpy.run_path(nm + ".py")
+    ntw = g["ntw"]; d = json.load(open(nm + ".json")); worst = 0.0; nan_ok = True
+    for key, (i, j) in {"1,1": (0, 0), "2,1": (1, 0), "1,2": (0, 1), "2,2": (1, 1)}.items():
+        js = np.array(d["S"][key][0], dtype=float) + 1j*np.array(d["S"][key][1], dtype=float); py = ntw.s[:, i, j]   # JSON null = NaN
+        if not np.array_equal(np.isnan(js), np.isnan(py)): nan_ok = False
+        m = ~np.isnan(js)
+        if m.any(): worst = max(worst, float(np.max(np.abs(py[m] - js[m]))))
+    labels = [l.get_label() for l in plt.gcf().axes[0].get_lines() if not l.get_label().startswith("_")]
+    out[nm] = {"worst": worst, "nan_ok": nan_ok, "files": sorted(f for f in os.listdir(".") if f.endswith(".s2p")), "labels": len(labels)}
+    plt.close("all")
+print(json.dumps(out))
+`;
+    const run = spawnSync('python3', ['-c', runner, dir, ...meta], { encoding: 'utf8' });
+    if (run.status !== 0) check('the generated scripts run', false, run.stderr.slice(-600));
+    else {
+      const res = JSON.parse(run.stdout.trim().split('\n').pop());
+      for (const nm of meta) check('script ' + nm + ': scikit-rf S equals the app to 1e-12', res[nm] && res[nm].worst < 1e-12 && res[nm].nan_ok, JSON.stringify(res[nm]));
+      check('script: a 0 Ω (lossless) load writes no _load_ref file', !res.zero_R_load.files.includes('zero_R_load_load_ref.s2p'));
+      check('script: a name with "." still writes readable .s2p files', res.lmatch.files.includes('match_v1.2_network.s2p') && res.lmatch.files.includes('match_v1.2_load_ref.s2p'));
+      check('script: a name starting with "_" keeps its legend', res.lmatch.labels > 0, JSON.stringify(res.lmatch));
+    }
+  }
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));

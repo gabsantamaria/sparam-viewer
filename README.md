@@ -32,15 +32,18 @@ python3 -m http.server 8613
   `s_def='power'`) or to Z₀. Downloads: the network `.s2p` (both ports at Z₀),
   the as-plotted `.s2p` (per-frequency port impedances), a scikit-rf script
   that rebuilds and plots the same circuit, and the schematic as SVG. The JS
-  engine matches scikit-rf 2.0.1 to ~1e-15.
+  engine matches scikit-rf 2.0.1 to ~1e-15, and the test suite runs the
+  generated scripts in scikit-rf and compares them to 1e-12.
 
 ## Data integrity
 
 Nothing is ever interpolated, resampled, or decimated. Downloads re-parse
 bit-identical to what is plotted. Ambiguous or malformed files are refused
 with named reasons, never guessed at.
-A file whose `! Port Impedance` lines differ from its option-line `R` (an
-export that was not renormalized) is refused rather than read at `R`.
+A file whose `! Port Impedance` records (wrapped HFSS records included) or v2
+`[Reference]` list differ from its single reference (an export that was not
+renormalized) is refused rather than read at one value. A saved project that
+holds such a file still opens — that file is left out and named.
 
 ## Tests
 

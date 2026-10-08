@@ -124,7 +124,8 @@
   #tooltip .trow.focus{ font-weight:700; }
   #tooltip .trow .val{ margin-left:auto; padding-left:14px; }
   #tooltip .swatch{ width:16px; height:0; border-top-width:2.5px; border-top-color:currentColor; flex:0 0 auto; }
-  #toasts{ position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:40; display:flex; flex-direction:column; gap:6px; max-width:70%; }
+  /* above the dialog backdrop (60): a message raised from inside a dialog must not be hidden behind it */
+  #toasts{ position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:70; display:flex; flex-direction:column; gap:6px; max-width:70%; }
   .toast{
     background:#122036; border:1px solid #2c4266; border-radius:7px; padding:7px 12px;
     font-size:12px; box-shadow:0 6px 18px rgba(0,0,0,.45); cursor:pointer;
@@ -451,17 +452,31 @@ const SNP = (function(){
     let unit='ghz', fmt='ma', z0=50, paramType='s', sawOption=false;
     let v2=false, dataOrder=null, matrixFormat='full', inData=true, ended=false;
     let refPending=false; const refVals=[];
-    let rNoValue=false; const portZLines=[];   // "! Port Impedance re im …" (HFSS / scikit-rf)
+    // "! Port Impedance re im …" records (HFSS / scikit-rf). HFSS before 2020 R2 WRAPS a long record
+    // onto further comment-only lines of bare numbers, so a record stays open across them.
+    let rGiven=false, rNoValue=false; const portZRecs=[]; let pzOpen=null;
+    const numToks=str=>{ const t=str.trim().split(/\s+/).filter(Boolean); return (t.length && t.every(w=>Number.isFinite(Number(w))))? t.map(Number) : null; };
     const tokens=[];
 
     for (const raw of String(text).split(/\r\n|\r|\n/)){
       if (ended) break;
       const bang = raw.indexOf('!');
-      if (bang>=0){
-        const pz=/^\s*port\s+impedance\s*[:=]?(.*)$/i.exec(raw.slice(bang+1));
-        if (pz) portZLines.push(pz[1]);
-      }
       const line = (bang>=0 ? raw.slice(0,bang) : raw).trim();
+      if (bang>=0 && !line){                 // a comment-only line
+        const cm=raw.slice(bang+1);
+        const pz=/^\s*port\s+impedances?\b\s*[:=]?(.*)$/i.exec(cm);
+        if (pz){
+          const nums=numToks(pz[1]);
+          if (nums){ pzOpen={ nums, text:pz[1].trim() }; portZRecs.push(pzOpen); }
+          else {                             // descriptive text ("! Port Impedance: see notes"), not a record
+            pzOpen=null;
+            if (pz[1].trim()) warnings.push('A "Port Impedance" comment that is not a list of numbers was ignored: "'+cm.trim().slice(0,60)+'"');
+          }
+        } else if (pzOpen){
+          const nums=numToks(cm);
+          if (nums) pzOpen.nums.push(...nums); else pzOpen=null;
+        }
+      } else pzOpen=null;
       if (!line) continue;
 
       if (line[0]==='['){
@@ -502,7 +517,7 @@ const SNP = (function(){
           if (w in FREQ_MULT) unit=w;
           else if (w==='s'||w==='y'||w==='z'||w==='g'||w==='h') paramType=w;
           else if (w==='db'||w==='ma'||w==='ri') fmt=w;
-          else if (w==='r'){ const v=parseFloat(t[i+1]); if (Number.isFinite(v)){ z0=v; i++; } else rNoValue=true; }
+          else if (w==='r'){ const v=parseFloat(t[i+1]); if (Number.isFinite(v)){ z0=v; rGiven=true; i++; } else rNoValue=true; }
           else warnings.push('Unknown option token "'+t[i]+'" ignored');
         }
         continue;
@@ -526,44 +541,11 @@ const SNP = (function(){
 
     if (refVals.length){
       z0=refVals[0];
+      // one reference per file: reading port 2 of a 50/75 Ω file at 50 Ω mislabels S21, S12, S22
       if (refVals.some(v=>v!==refVals[0]))
-        warnings.push('[Reference] lists per-port impedances ('+refVals.join(', ')+' Ω) — using '
-          +refVals[0]+' Ω for all ports; renormalization is NOT performed');
-    }
-
-    // The data are referenced to the impedances the file STATES. HFSS and scikit-rf write them
-    // as "! Port Impedance" comment lines; when those differ from the one real R this viewer
-    // reads, the export was NOT renormalized (per-port / per-frequency references) and reading
-    // it at R would mislabel every S-parameter — refuse rather than guess.
-    if (portZLines.length){
-      const tol=v=>1e-6*Math.max(1, Math.abs(v));
-      const fromLines= rNoValue && !refVals.length;
-      let first=null;
-      for (const s of portZLines){
-        const nums=s.trim().split(/\s+/).filter(Boolean).map(Number);
-        if (!nums.length || nums.length%2 || nums.some(v=>!Number.isFinite(v)))
-          return { ok:false, error:'Unreadable "! Port Impedance" line ('+s.trim().slice(0,60)+') — the file states its port impedances and they cannot be read, so its reference cannot be confirmed', warnings };
-        for (let q=0;q<nums.length;q+=2){
-          const re=nums[q], im=nums[q+1];
-          if (!first) first={ re, im };
-          const want= fromLines? first : { re:z0, im:0 };
-          if (Math.abs(re-want.re)>tol(want.re) || Math.abs(im-want.im)>tol(want.re))
-            return { ok:false, error:'Not referenced to one real impedance: a "! Port Impedance" line gives '
-              +fmtNum(re,6)+(im<0?' − j':' + j')+fmtNum(Math.abs(im),6)+' Ω where '
-              +(fromLines? 'an earlier one gives '+fmtNum(want.re,6)+(want.im<0?' − j':' + j')+fmtNum(Math.abs(want.im),6)+' Ω'
-                         : 'the option line says R '+fmtNum(z0,6)+' Ω')
-              +'. The data were exported WITHOUT renormalization, so reading them at a single R would mislabel every S-parameter. Re-export renormalized to one real impedance (HFSS: renormalize all ports to 50 Ω).', warnings };
-        }
-      }
-      if (fromLines){
-        if (!(first.re>0) || Math.abs(first.im)>tol(first.re))
-          return { ok:false, error:'The "! Port Impedance" lines give a complex reference ('+fmtNum(first.re,6)+(first.im<0?' − j':' + j')
-            +fmtNum(Math.abs(first.im),6)+' Ω) — this viewer reads data referenced to one REAL impedance only', warnings };
-        z0=first.re;
-        warnings.push('Option line "R" has no value — the reference ('+fmtNum(z0,6)+' Ω) is taken from the "! Port Impedance" lines, which all agree');
-      }
-    } else if (rNoValue && !refVals.length){
-      warnings.push('Option line "R" has no value — assuming 50 Ω (the Touchstone default)');
+        return { ok:false, error:'[Reference] lists different per-port impedances ('+refVals.join(', ')
+          +' Ω). This viewer reads data referenced to ONE real impedance and does not renormalize — '
+          +'re-export with every port at the same reference', warnings };
     }
 
     if (paramType!=='s')
@@ -592,6 +574,44 @@ const SNP = (function(){
       else
         return { ok:false, error:'Ambiguous data shape — fits '+fits.map(n=>n+'-port').join(' and ')
           +'; name the file with a .sNp extension so nothing is guessed', warnings };
+    }
+
+    // The data are referenced to the impedances the file STATES. HFSS and scikit-rf write them
+    // as "! Port Impedance" comment records; when those differ from the one real R this viewer
+    // reads, the export was NOT renormalized (per-port / per-frequency references) and reading
+    // it at R would mislabel every S-parameter — refuse rather than guess.
+    if (portZRecs.length){
+      const tol=v=>1e-6*Math.max(1, Math.abs(v));
+      const fromLines= rNoValue && !refVals.length;
+      const refWord= refVals.length? 'the [Reference] line says '+fmtNum(z0,6)+' Ω'
+        : rGiven? 'the option line says R '+fmtNum(z0,6)+' Ω'
+        : 'the option line gives no R, so the Touchstone default is 50 Ω';
+      const zs=(re,im)=>fmtNum(re,6)+(im<0?' − j':' + j')+fmtNum(Math.abs(im),6)+' Ω';
+      let first=null;
+      for (const r of portZRecs){
+        if (r.nums.length!==2*nPorts)
+          return { ok:false, error:'A "! Port Impedance" record holds '+r.nums.length+' values where a '+nPorts
+            +'-port file needs '+(2*nPorts)+' (one re, im pair per port): "'+r.text.slice(0,60)
+            +'" — the file states its port impedances and they cannot be read, so its reference cannot be confirmed', warnings };
+        for (let q=0;q<r.nums.length;q+=2){
+          const re=r.nums[q], im=r.nums[q+1];
+          if (!first) first={ re, im };
+          const want= fromLines? first : { re:z0, im:0 };
+          if (Math.abs(re-want.re)>tol(want.re) || Math.abs(im-want.im)>tol(want.re))
+            return { ok:false, error:'Not referenced to one real impedance: port '+(q/2+1)+' of a "! Port Impedance" record is '
+              +zs(re,im)+' where '+(fromLines? 'an earlier one is '+zs(want.re,want.im) : refWord)
+              +'. The data were exported WITHOUT renormalization, so reading them at a single R would mislabel every S-parameter. Re-export renormalized to one real impedance (HFSS: renormalize all ports to 50 Ω).', warnings };
+        }
+      }
+      if (fromLines){
+        if (!(first.re>0) || Math.abs(first.im)>tol(first.re))
+          return { ok:false, error:'The "! Port Impedance" records give a complex reference ('+zs(first.re,first.im)
+            +') — this viewer reads data referenced to one REAL impedance only', warnings };
+        z0=first.re;
+        warnings.push('Option line "R" has no value — the reference ('+fmtNum(z0,6)+' Ω) is taken from the "! Port Impedance" records, which all agree');
+      }
+    } else if (rNoValue && !refVals.length){
+      warnings.push('Option line "R" has no value — assuming 50 Ω (the Touchstone default)');
     }
 
     const n=nPorts, rec=1+2*n*n;
@@ -1011,7 +1031,7 @@ const SNP = (function(){
       for (const c of sm.chains.slice(0,16)){
         if (!c || typeof c!=='object') continue;
         chains.push({
-          name:(typeof c.name==='string'&&c.name.trim())? c.name.trim().slice(0,24):'list',
+          name:(typeof c.name==='string'&&c.name.replace(/[\u0000-\u001f\u007f]+/g,' ').trim())? c.name.replace(/[\u0000-\u001f\u007f]+/g,' ').trim().slice(0,24):'list',
           hide:!!c.hide, open:c.open!==false,
           cursor:(Number.isInteger(c.cursor)&&c.cursor>=0)? c.cursor:null,
           steps:sanSteps(c.steps),
@@ -1075,10 +1095,11 @@ const SNP = (function(){
     const sh=(c.show&&typeof c.show==='object')? c.show : {};
     return {
       f0: pos(c.f0)||1e9,
-      unit: (c.unit in CIRC_UNITS)? c.unit : 'GHz',
+      unit: Object.prototype.hasOwnProperty.call(CIRC_UNITS, c.unit)? c.unit : 'GHz',   // own keys only: 'toString' is not a unit
       z1: pos(c.z1),                                   // null = the chart Z0 at the end of the list
       loadTopo: CIRC_LOAD_TOPOS.includes(c.loadTopo)? c.loadTopo : null,   // null = by the sign of X
-      loadAuto: c.loadAuto!==false,                    // true = values fitted to the start point at f0
+      // true = values fitted to the start point at f0; an edited load needs a topology to mean anything
+      loadAuto: c.loadAuto!==false || !CIRC_LOAD_TOPOS.includes(c.loadTopo),
       loadR: (typeof c.loadR==='number' && isFinite(c.loadR) && c.loadR>=0)? c.loadR : null,
       loadC: pos(c.loadC), loadL: pos(c.loadL),
       fStart: pos(c.fStart), fStop: pos(c.fStop),      // null = f0/2 .. 3 f0/2
@@ -1181,9 +1202,10 @@ const SNP = (function(){
   function circLoadCheck(ld){
     if (!ld || !CIRC_LOAD_TOPOS.includes(ld.topo)) return 'pick a load topology';
     const par= ld.topo==='pRC' || ld.topo==='pRL';
-    if (!(isFinite(ld.R) && (par? ld.R>0 : ld.R>=0))) return par? 'a parallel load needs R > 0 Ω' : 'the load needs R ≥ 0 Ω';
-    if ((ld.topo==='sRC'||ld.topo==='pRC') && !(ld.C>0 && isFinite(ld.C))) return 'the load needs C > 0';
-    if ((ld.topo==='sRL'||ld.topo==='pRL') && !(ld.L>0 && isFinite(ld.L))) return 'the load needs L > 0';
+    // Number.isFinite, not isFinite: the global one coerces null to 0 and passes an empty R as 0 Ω
+    if (!(Number.isFinite(ld.R) && (par? ld.R>0 : ld.R>=0))) return par? 'a parallel load needs R > 0 Ω' : 'the load needs R ≥ 0 Ω';
+    if ((ld.topo==='sRC'||ld.topo==='pRC') && !(Number.isFinite(ld.C) && ld.C>0)) return 'the load needs C > 0';
+    if ((ld.topo==='sRL'||ld.topo==='pRL') && !(Number.isFinite(ld.L) && ld.L>0)) return 'the load needs L > 0';
     if (ld.topo==='R' && !(ld.R>0)) return 'a resistor load needs R > 0 Ω';
     return null;
   }
@@ -1227,7 +1249,7 @@ const SNP = (function(){
   // referenced to the real z1 and port 2 to Z2 = the load Z_L(f) (ref2 'load') or z1 (ref2 'z0'):
   //   den = A Z2 + B + C Z1 Z2 + D Z1
   //   S11 = (A Z2 + B − C Z1* Z2 − D Z1*)/den     S21 = 2 √(R1 R2)/den
-  //   S12 = 2 √(R1 R2)(AD − BC)/den               S22 = (−A Z2* + B − C Z1 Z2* + D Z1)/den
+  //   S12 = 2 √(R1 R2)(AD − BC)/den = S21         S22 = (−A Z2* + B − C Z1 Z2* + D Z1)/den
   // With a2 = 0 port 2 is terminated in Z2 itself, so S11 is the input reflection with the
   // load attached; |S21|² is the power delivered to the load over the power available from
   // port 1; S22 = (Zout − Z_L*)/(Zout + Z_L) is the conjugate-match error seen from the load.
@@ -1264,8 +1286,12 @@ const SNP = (function(){
         continue;
       }
       const g=2*Math.sqrt(R1*R2);
-      put('2,1', cxDivX({ re:g, im:0 }, den));
-      put('1,2', cxDivX(cxMul({ re:g, im:0 }, cxSub(cxMul(A,D), cxMul(B,C))), den));
+      const s21=cxDivX({ re:g, im:0 }, den);
+      put('2,1', s21);
+      // every element is reciprocal with AD − BC = 1 EXACTLY, so S12 = S21. Evaluating AD − BC from
+      // the cascaded product instead cancels catastrophically in a stopband (|AD| ~ 1e30): S12
+      // came out anywhere from exactly 0 to +122 dB on a passive ladder, and went into the .s2p
+      put('1,2', s21);
       const s22n=cxAdd(cxSub(B, cxMul(A,Z2c)), cxSub(DZ1, cxMul(cxMul(C,Z1),Z2c)));
       put('2,2', cxDivX(s22n, den));
     }
@@ -1324,7 +1350,12 @@ const SNP = (function(){
     // the circuit at f0 with the start-point load IS the chart's last point — a hard check
     if (out.loadMatchesStart){
       const d=Math.hypot(zi.re[0]-circ.zIn0.re, zi.im[0]-circ.zIn0.im);
-      out.f0Check={ ok: d<=1e-9*Math.max(1, Math.hypot(circ.zIn0.re, circ.zIn0.im)), dz:d };
+      // near an open both sides legitimately carry ~1e-16·|Z|²/Z0 of rounding, which beats any
+      // relative-Z tolerance above ~1e9 Ω — so a match in Γ (at port 1's Z0) also counts
+      const gm=z=>{ const q=cxDivX({ re:z.re-out.z1, im:z.im }, { re:z.re+out.z1, im:z.im }); return q||{ re:NaN, im:NaN }; };
+      const ga=gm({ re:zi.re[0], im:zi.im[0] }), gb=gm(circ.zIn0);
+      const dg=Math.hypot(ga.re-gb.re, ga.im-gb.im);
+      out.f0Check={ ok: d<=1e-9*Math.max(1, Math.hypot(circ.zIn0.re, circ.zIn0.im)) || dg<=1e-12, dz:d, dGamma:dg };
     }
     if (out.res.noPower)
       out.notes.push('S21, S12 and S22 are undefined at '+out.res.noPower+' of '+cfg.n+' points: the load absorbs no power there (Re Z_L ≤ 0), so its power waves do not exist — S11 still is');
@@ -1344,10 +1375,13 @@ const SNP = (function(){
       if (a>=m*(1-5*Math.pow(10,-sg))) return String(parseFloat((v/m).toPrecision(sg)))+' '+p+unit;
     return v.toExponential(sg-1)+' '+unit;
   }
-  const xmlEsc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // control characters are not allowed in XML 1.0 at all — drop them (a project file can carry one in a name)
+  const xmlEsc=s=>String(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g,'')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const noCtl=s=>String(s).replace(/[\u0000-\u001f\u007f]+/g,' ');
 
   // ---------- the schematic, as a standalone SVG string ----------
-  // model: { name, f0Hz, z1, elements (port 1 -> load), load, loadStep, ref2 }
+  // model: { name, f0Hz, z1, elements (port 1 -> load), load, loadStep, loadEdited, loadErr, ref2 }
   function circuitSchematicSvg(model, opt){
     opt=opt||{};
     const pal=opt.pal||{ bg:'#ffffff', line:'#1f2937', ink:'#111827', ink2:'#6b7280', fill:'#e0e7ff', ref:'#7c3aed' };
@@ -1357,7 +1391,12 @@ const SNP = (function(){
     const L=(x1,y1,x2,y2,extra)=>els.push('<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+pal.line+'" stroke-width="1.6"'+(extra||'')+'/>');
     // inline STYLE, not presentation attributes: a host page's `svg text{ fill:… }` rule beats an
     // attribute but never an inline style, so the schematic reads the same embedded or standalone
+    // monospace advance ~0.62 em: enough to size the drawing so no label is clipped
+    const tw=(s,size)=>String(s).length*(size||11)*0.62;
+    let maxRight=0;
     const T=(x,y,s,o)=>{ o=o||{};
+      const w=tw(s,o.size);
+      maxRight=Math.max(maxRight, o.anchor==='middle'? x+w/2 : o.anchor==='end'? x : x+w);
       txt.push('<text x="'+x+'" y="'+y+'"'+(o.anchor?' text-anchor="'+o.anchor+'"':'')
         +' style="font-size:'+(o.size||11)+'px;fill:'+(o.col||pal.ink)+(o.weight?';font-weight:'+o.weight:'')+'">'+xmlEsc(s)+'</text>'); };
     // a two-terminal symbol between (x1,y) and (x2,y), drawn horizontally; vertical ones are rotated
@@ -1393,13 +1432,17 @@ const SNP = (function(){
     els.push('<circle cx="'+px+'" cy="'+MID+'" r="15" fill="none" stroke="'+pal.line+'" stroke-width="1.6"/>');
     T(px, MID+4, '1', { anchor:'middle', weight:'700' });
     L(px, RAIL, px, MID-15); L(px, MID+15, px, GND);
-    T(px, RAIL-30, 'port 1', { anchor:'middle', weight:'700' });
-    T(px, RAIL-16, 'Z₀ = '+fmtNum(model.z1,5)+' Ω', { anchor:'middle', col:pal.ink2, size:10.5 });
+    // the port's labels sit LEFT-aligned above it and the first element starts clear of them —
+    // centred on the port they ran into the first element's value labels
+    const zLab='Z₀ = '+fmtNum(model.z1,5)+' Ω';
+    T(10, RAIL-30, 'port 1', { weight:'700' });
+    T(10, RAIL-16, zLab, { col:pal.ink2, size:10.5 });
     // ground glyph under the port
     L(px, GND, px, GND+10);
     L(px-11, GND+10, px+11, GND+10); L(px-7, GND+14, px+7, GND+14); L(px-3, GND+18, px+3, GND+18);
-    x=px;
     const rail=(x1,x2)=>L(x1, RAIL, x2, RAIL);
+    x=Math.max(px+30, Math.ceil(10+tw(zLab,10.5)+14));
+    rail(px, x);
     for (const e of model.elements){
       const tag='#'+(e.step+1);
       if (e.type==='line'){
@@ -1476,15 +1519,17 @@ const SNP = (function(){
     els.push('<line x1="'+refX+'" y1="'+(RAIL-40)+'" x2="'+refX+'" y2="'+(GND+12)+'" stroke="'+pal.ref+'" stroke-width="1.4" stroke-dasharray="5 4"/>');
     T(refX, RAIL-46, 'port 2', { anchor:'middle', weight:'700', col:pal.ref });
     T(refX, GND+26, model.ref2==='z0'? 'ref Z₀ = '+fmtNum(model.z1,5)+' Ω' : 'ref = Z_L(f)', { anchor:'middle', col:pal.ref, size:10 });
-    const ld=model.load;
+    const ld= model.loadErr? null : model.load;
     const lx=refX+40, dim= model.ref2==='z0';
     const lg0=els.length, tg0=txt.length;
+    const lp=[];
     if (ld){
-      const lp=[];
       // a 0 Ω resistor in a SERIES load is a wire — draw the C / L alone
-      if (ld.R!=null && !(ld.R===0 && (ld.topo==='sRC' || ld.topo==='sRL'))) lp.push(['R', 'R '+fmtSI(ld.R,'Ω')]);
-      if (ld.C!=null) lp.push(['C', 'C '+fmtSI(ld.C,'F')]);
-      if (ld.L!=null) lp.push(['L', 'L '+fmtSI(ld.L,'H')]);
+      if (Number.isFinite(ld.R) && !(ld.R===0 && (ld.topo==='sRC' || ld.topo==='sRL'))) lp.push(['R', 'R '+fmtSI(ld.R,'Ω')]);
+      if (Number.isFinite(ld.C)) lp.push(['C', 'C '+fmtSI(ld.C,'F')]);
+      if (Number.isFinite(ld.L)) lp.push(['L', 'L '+fmtSI(ld.L,'H')]);
+    }
+    if (lp.length){
       const par= ld.topo==='pRC' || ld.topo==='pRL';
       if (par && lp.length===2){
         const b2=lx+40;
@@ -1504,11 +1549,14 @@ const SNP = (function(){
         T(lx+14, MID+4, lp[0][1]);
         x=lx;
       }
-      T(x+14, RAIL-14, 'load'+(model.loadStep!=null? ' (#'+(model.loadStep+1)+' start)' : ''), { weight:'700' });
+      T(x+14, RAIL-14, 'load'+(model.loadEdited? ' (edited — not the start point)'
+        : model.loadStep!=null? ' (#'+(model.loadStep+1)+' start)' : ''), { weight:'700' });
       T(x+14, RAIL, ({ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'parallel RL', R:'resistor' })[ld.topo]
         +(dim? ' — not in S' : ''), { col:pal.ink2, size:10 });
     } else {
-      T(lx+14, MID, 'load: —', { col:pal.ink2 });
+      // no usable load: say so in the drawing itself, never draw a part that is not the load
+      T(lx, MID-6, 'load: ✗ '+(model.loadErr||'no values'), { col:'#dc2626', weight:'700' });
+      T(lx, MID+10, 'nothing is computed until the load is fixed', { col:pal.ink2, size:10 });
       x=lx;
     }
     if (dim){                                         // port 2 at Z0: the load is drawn but not part of S
@@ -1516,12 +1564,14 @@ const SNP = (function(){
       txt.splice(tg0, 0, '<g opacity="0.55">'); txt.push('</g>');
     }
     // ground return
-    const xEnd=x+150;
     L(px, GND, Math.max(px, x), GND);
-    const W=Math.ceil(xEnd+10), H=GND+60;
+    const H=GND+60;
     T(10, 16, (model.name||'design list')+' — circuit at f₀ = '+fmtSI(model.f0Hz,'Hz',6), { weight:'700', size:12 });
     T(10, H-10, 'values defined at f₀ · L/C from the reactance at f₀ · lines TEM, lossless, θ ∝ f · drawn port 1 → load', { col:pal.ink2, size:9.5 });
-    const hov=groups.map(g=>'<rect x="'+g[0]+'" y="'+(RAIL-60)+'" width="'+(g[1]-g[0])+'" height="'+(GND-RAIL+70)+'" fill="transparent"><title>'+xmlEsc(g[2])+'</title></rect>').join('');
+    const W=Math.ceil(Math.max(x+150, maxRight+12));          // wide enough for every label
+    // fill="none" + pointer-events, not fill="transparent": that is not an SVG 1.1 paint, and
+    // Inkscape drew these full-height boxes solid black over the whole downloaded schematic
+    const hov=groups.map(g=>'<rect x="'+g[0]+'" y="'+(RAIL-60)+'" width="'+(g[1]-g[0])+'" height="'+(GND-RAIL+70)+'" fill="none" pointer-events="all"><title>'+xmlEsc(g[2])+'</title></rect>').join('');
     const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+xmlEsc(font)+'">'
       +'<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="'+pal.bg+'"/>'
       +els.join('')+txt.join('')+hov+'</svg>';
@@ -1529,10 +1579,19 @@ const SNP = (function(){
   }
 
   // ---------- the same circuit as a scikit-rf script ----------
+  // The cascade is built from scikit-rf parts (med.inductor, med.shunt_capacitor, …). Two things
+  // are done in closed form instead, because scikit-rf's own route is not exact there:
+  //  - a line of Zc ≠ Z0 is built from its ABCD matrix — med.line(z0=Zc) renormalises through a
+  //    Z-matrix, which a line near n·180° nearly lacks (≈1e-8 error);
+  //  - the power-wave S referenced to the load comes from the cascade's ABCD with the same
+  //    formulas as circuitSparams — Network.renormalize goes through s2z, which a series-only
+  //    network does not have, and silently adds 1e-4 Ω to a reference with Re = 0.
   function circuitSkrfScript(model){
     const py=v=>{ if (!isFinite(v)) throw new Error('non-finite value in the circuit: '+v); return String(v); };
-    const pyStr=s=>'"'+String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/[\r\n]+/g,' ')+'"';
-    const fname=String(model.name||'design').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/^_+|_+$/g,'')||'design';
+    const pyStr=s=>'"'+noCtl(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"';
+    const fname=String(model.name||'design').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/^[_.]+|[_.]+$/g,'')||'design';
+    // matplotlib hides legend labels that start with "_"
+    const plotName=noCtl(model.name||'design').replace(/^[\s_]+/,'')||'design';
     const sw=model.sweep;
     const lines=[];
     lines.push('#!/usr/bin/env python3');
@@ -1540,7 +1599,7 @@ const SNP = (function(){
     lines.push('# Values were set on the Smith chart at the design frequency f0: every reactance is the');
     lines.push('# L or C that has it at f0, every line is TEM and lossless (electrical length ∝ f).');
     lines.push('# The list starts at the load and walks toward the generator; the cascade below is');
-    lines.push('# written port 1 -> load. Generated '+new Date().toISOString().slice(0,10)+' — needs scikit-rf >= 1.0, numpy, matplotlib.');
+    lines.push('# written port 1 -> load. Needs scikit-rf >= 1.0, numpy, matplotlib.');
     lines.push('import numpy as np');
     lines.push('import matplotlib.pyplot as plt');
     lines.push('import skrf as rf');
@@ -1554,18 +1613,28 @@ const SNP = (function(){
     lines.push('freq.unit = '+pyStr(model.unit||'GHz'));
     lines.push('w = 2*np.pi*freq.f');
     lines.push('med = DefinedGammaZ0(frequency=freq, z0_port=Z0, z0=Z0, gamma=1j*w/c0)   # TEM, lossless');
+    lines.push('one, zero = np.ones(len(w), dtype=complex), np.zeros(len(w), dtype=complex)');
+    lines.push('');
+    lines.push('def abcd_network(A, B, C, D):');
+    lines.push('    """A two-port from its ABCD matrix, as S at Z0 (closed form, exact)."""');
+    lines.push('    abcd = np.empty((len(w), 2, 2), dtype=complex)');
+    lines.push('    abcd[:, 0, 0], abcd[:, 0, 1], abcd[:, 1, 0], abcd[:, 1, 1] = A, B, C, D');
+    lines.push('    return rf.Network(frequency=freq, s=rf.network.a2s(abcd, Z0), z0=Z0)');
     lines.push('');
     lines.push('def tline(Zc, theta0_deg):');
-    lines.push('    """Lossless TEM line of characteristic impedance Zc, electrical length theta0_deg at f0."""');
-    lines.push('    return med.line(np.deg2rad(theta0_deg)*c0/(2*np.pi*f0), unit="m", z0=Zc)');
+    lines.push('    """Lossless TEM line of impedance Zc, electrical length theta0_deg at f0 (theta ∝ f).');
+    lines.push('    From its ABCD matrix: med.line(z0=Zc) renormalises through a Z-matrix and loses ~1e-8');
+    lines.push('    near multiples of 180 degrees."""');
+    lines.push('    th = np.deg2rad(theta0_deg)*freq.f/f0');
+    lines.push('    return abcd_network(np.cos(th)*one, 1j*Zc*np.sin(th), 1j*np.sin(th)/Zc, np.cos(th)*one)');
     lines.push('');
     lines.push('def series_z(Z):');
-    lines.push('    """Series element of any impedance Z(f) (skrf\'s series element takes complex arrays)."""');
-    lines.push('    return med.resistor(Z)');
+    lines.push('    """Series element of any impedance Z(f)."""');
+    lines.push('    return abcd_network(one, Z*one, zero, one)');
     lines.push('');
     lines.push('def shunt_z(Z):');
     lines.push('    """Shunt branch to ground of any impedance Z(f)."""');
-    lines.push('    return med.shunt_resistor(Z)');
+    lines.push('    return abcd_network(one, zero, one/Z, one)');
     lines.push('');
     const terms=[];
     for (const e of model.elements){
@@ -1605,28 +1674,43 @@ const SNP = (function(){
       terms.forEach(([ex, cm], i)=>lines.push('    '+(i? '** ' : '')+ex+'   '+cm));
       lines.push(')');
     }
-    lines.push('network.name = '+pyStr((model.name||'design')+' network'));
+    lines.push('network.name = '+pyStr(plotName+' network'));
     lines.push('');
     const ld=model.load;
-    lines.push('# ---- the load'+(model.loadStep!=null? ' (the start point, step '+(model.loadStep+1)+')' : '')+': '
-      +({ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'parallel RL', R:'resistor' })[ld.topo]+' ----');
+    const topoName=({ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'parallel RL', R:'resistor' })[ld.topo];
+    lines.push('# ---- the load: '+topoName+(model.loadEdited? ' — EDITED: Z_L(f0) differs from the start point'
+      : model.loadStep!=null? ' (the start point, step '+(model.loadStep+1)+')' : '')+' ----');
     lines.push('R_load = '+py(ld.R));
     if (ld.C!=null) lines.push('C_load = '+py(ld.C));
     if (ld.L!=null) lines.push('L_load = '+py(ld.L));
     lines.push('ZL = '+({ sRC:'R_load + 1/(1j*w*C_load)', sRL:'R_load + 1j*w*L_load',
-      pRC:'1/(1/R_load + 1j*w*C_load)', pRL:'1/(1/R_load + 1/(1j*w*L_load))', R:'R_load + 0j*w' })[ld.topo]);
+      pRC:'1/(1/R_load + 1j*w*C_load)', pRL:'1/(1/R_load + 1/(1j*w*L_load))', R:'R_load*one' })[ld.topo]);
     lines.push('');
     if (model.ref2==='z0'){
       lines.push('# ---- port 2 at Z0: the network alone; the load is NOT part of these S-parameters ----');
       lines.push('ntw = network.copy()');
     } else {
-      lines.push('# ---- port 2 referenced to the load, POWER waves (Kurokawa) ----');
+      lines.push('# ---- port 2 referenced to the load, POWER waves (Kurokawa; scikit-rf s_def="power") ----');
       lines.push('# S11 = input reflection with the load attached; |S21|^2 = power delivered to the load');
-      lines.push('# over the power available from port 1; S22 = conjugate-match error seen from the load.');
-      lines.push('ntw = network.copy()');
-      lines.push('ntw.renormalize(np.column_stack([np.full(len(w), Z0, dtype=complex), ZL]), s_def="power")');
+      lines.push('# over the power available from port 1; S22 = (Zout - ZL*)/(Zout + ZL), the conjugate-match');
+      lines.push('# error seen from the load. Closed form from the cascade\'s ABCD matrix (exact).');
+      lines.push('A, B, C, D = (network.a[:, i, j] for i, j in ((0, 0), (0, 1), (1, 0), (1, 1)))');
+      lines.push('Z1, Z2 = Z0*one, ZL');
+      lines.push('den = A*Z2 + B + C*Z1*Z2 + D*Z1');
+      lines.push('S = np.full((len(w), 2, 2), np.nan, dtype=complex)');
+      lines.push('S[:, 0, 0] = (A*Z2 + B - C*np.conj(Z1)*Z2 - D*np.conj(Z1))/den');
+      lines.push('absorbs = Z2.real > 0   # a load with Re ZL <= 0 has no power waves: S21, S12, S22 undefined there');
+      lines.push('S21 = 2*np.sqrt(Z1.real*np.where(absorbs, Z2.real, 1.0))/den');
+      lines.push('S22 = (-A*np.conj(Z2) + B - C*Z1*np.conj(Z2) + D*Z1)/den');
+      lines.push('S[absorbs, 1, 0] = S21[absorbs]');
+      lines.push('S[absorbs, 0, 1] = S21[absorbs]   # reciprocal: AD - BC = 1');
+      lines.push('S[absorbs, 1, 1] = S22[absorbs]');
+      lines.push('ntw = rf.Network(frequency=freq, s=S, z0=np.column_stack([Z1, Z2]), s_def="power")');
+      lines.push('if not absorbs.all():');
+      lines.push('    print("note: the load absorbs no power at", int((~absorbs).sum()), "of", len(w), "points (Re ZL <= 0) -",');
+      lines.push('          "S21/S12/S22 are left undefined there, as in S-Param Studio")');
     }
-    lines.push('ntw.name = '+pyStr(model.name||'design'));
+    lines.push('ntw.name = '+pyStr(plotName));
     lines.push('');
     const show=model.show||{ s11:true, s21:true, s22:true };
     const pairs=[];
@@ -1641,24 +1725,30 @@ const SNP = (function(){
     lines.push('    ntw.plot_s_smith(m, n, ax=axs[2], draw_labels=True)');
     lines.push('for ax in axs[:2]:');
     lines.push('    ax.axvline(f0/freq.multiplier, color="0.5", ls="--", lw=1)   # f0');
+    if (sw.log) lines.push('    ax.set_xscale("log")');
     lines.push('axs[0].set_title("|S| (dB)"); axs[1].set_title("phase (deg)"); axs[2].set_title("Smith")');
     lines.push('fig.suptitle(ntw.name + "  —  port 2 " + ('+(model.ref2==='z0'? '"at Z0"' : '"= the load (power waves)"')+'))');
     lines.push('fig.tight_layout()');
     lines.push('');
-    lines.push('network.write_touchstone('+pyStr(fname+'_network')+')            # both ports at Z0');
-    if (model.ref2!=='z0')
-      lines.push('ntw.write_touchstone('+pyStr(fname+'_load_ref')+', write_z0=True)   # per-frequency port impedances');
+    lines.push('network.write_touchstone('+pyStr(fname+'_network.s2p')+')            # the network alone, both ports at Z0');
+    if (model.ref2!=='z0'){
+      lines.push('if absorbs.all():');
+      lines.push('    ntw.write_touchstone('+pyStr(fname+'_load_ref.s2p')+', write_z0=True)   # per-frequency port impedances');
+      lines.push('else:');
+      lines.push('    print("'+fname.replace(/"/g,'')+'_load_ref.s2p not written: S21/S12/S22 are undefined at some points")');
+    }
     lines.push('plt.show()');
     return lines.join('\n')+'\n';
   }
 
   // Touchstone with PER-FREQUENCY, complex port impedances, the way scikit-rf (and HFSS) write
   // them: an "R" with no value on the option line and a "! Port Impedance" line under every
-  // data line. scikit-rf reads it back exactly; this app's own parser REFUSES it (one real
-  // reference per file, never renormalized) — so it can never be re-imported mislabelled.
+  // data line. scikit-rf reads it back exactly. This app's own parser refuses it unless every
+  // port impedance in it equals one real value (then it is an ordinary file at that value), so
+  // it can never be re-imported mislabelled.
   function serializeTouchstonePortZ(freqHz, S, portZ, comments){
     const lines=[];
-    for (const c of (comments||[])) lines.push('! '+c);
+    for (const c of (comments||[])) lines.push('! '+noCtl(c));   // a newline would end the comment
     lines.push('! Data is not renormalized');
     lines.push('! S-parameter uses the power definition');
     lines.push('# Hz S RI R');
@@ -2031,7 +2121,7 @@ function cycleSel(fid,key){
 }
 
 // ---------- file save (hosted-artifact capability, else plain download) ----------
-async function saveTextFile(name, text){
+async function saveTextFile(name, text, opts){
   try {
     const dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null;
     if (dl){
@@ -2046,6 +2136,11 @@ async function saveTextFile(name, text){
         const code=e&&e.code;
         if (code==='declined') return;
         if (code==='rate_limited') toast('⏳ a save prompt is already open — try again in a moment', false);
+        else if (opts && opts.copyOnFail){
+          // the caller has no copy action of its own: put the text on the clipboard instead
+          try { await navigator.clipboard.writeText(text); toast('✗ save failed ('+(code||'error')+') — '+name+' was copied to the clipboard instead', true); }
+          catch(_){ toast('✗ save failed ('+(code||'error')+') and the clipboard refused it too', true); }
+        }
         else toast('✗ save failed ('+(code||'error')+') — use ⧉ copy instead', false);
       }
       return;
@@ -3482,8 +3577,12 @@ $('savePdfBtn').onclick=()=>{
 // ---------- modals ----------
 const modalBack=$('modalBack'), modalBox=$('modalBox');
 let modalDownOnBack=false;
-function openModal(html, cls){ modalBox.className='modal'+(cls?' '+cls:''); modalBox.innerHTML=html; modalBack.hidden=false; }
-function closeModal(){ modalBack.hidden=true; modalBox.innerHTML=''; modalBox.className='modal'; }
+// the page behind an open dialog is INERT: no tabbing into it, no editing the list a window is showing
+// toasts live OUTSIDE the inert page, so one raised while a dialog is open can still be dismissed
+document.body.appendChild($('toasts'));
+const modalInert=on=>{ for (const el of document.querySelectorAll('body > header, body > main')) el.inert=on; };
+function openModal(html, cls){ modalBox.className='modal'+(cls?' '+cls:''); modalBox.innerHTML=html; modalBack.hidden=false; modalInert(true); }
+function closeModal(){ modalBack.hidden=true; modalBox.innerHTML=''; modalBox.className='modal'; modalInert(false); }
 modalBack.addEventListener('mousedown',ev=>{ modalDownOnBack = ev.target===modalBack; });
 modalBack.addEventListener('mouseup',ev=>{
   // both press and release on the backdrop — a text-select drag must not discard the dialog
@@ -3828,15 +3927,18 @@ function loadProjectText(text, opts){
   if (!Array.isArray(p.files) || !Array.isArray(p.tabs) || !p.tabs.length){
     say('✗ project file is missing its files/tabs sections', true); return false;
   }
-  // parse EVERY file first — a project loads whole or not at all
-  const newFiles=[];
+  // parse every file first. A file this build REFUSES (e.g. a rule added since it was saved) is
+  // left out and NAMED — loudly, even on a quiet restore — instead of discarding the whole
+  // project, its tabs and its Smith designs with it
+  const slots=[], refused=[];
   for (const pf of p.files){
     const parsed=SNP.parseTouchstone(pf.name, pf.text);
-    if (!parsed.ok){ say('✗ project load aborted — '+pf.name+': '+parsed.error, true); return false; }
-    newFiles.push({ id:'f'+(++fileCounter), name:pf.name, parsed, text:String(pf.text),
+    if (!parsed.ok){ refused.push(pf.name+': '+parsed.error); slots.push(null); continue; }
+    slots.push({ id:'f'+(++fileCounter), name:pf.name, parsed, text:String(pf.text),
       label:(typeof pf.label==='string'&&pf.label)?pf.label:null,
       dashIdx: Number.isInteger(pf.dashIdx)? ((pf.dashIdx%FILE_DASHES.length)+FILE_DASHES.length)%FILE_DASHES.length : 0 });
   }
+  const newFiles=slots.filter(Boolean);
   state.files=newFiles;
   dashCounter=newFiles.length;
   derivedCache.clear(); colorMap.clear();
@@ -3846,7 +3948,7 @@ function loadProjectText(text, opts){
   const fin=v=>(typeof v==='number'&&isFinite(v))?v:null;
   const remap=arr=>new Set((Array.isArray(arr)?arr:[]).map(sl=>{
     const i=String(sl).indexOf('|'); if (i<1) return null;
-    const f=newFiles[+String(sl).slice(0,i)];
+    const f=slots[+String(sl).slice(0,i)];         // index into the SAVED list, skipped files included
     const key=String(sl).slice(i+1);
     return (f && f.parsed.S[key])? f.id+'|'+key : null;
   }).filter(Boolean));
@@ -3871,7 +3973,7 @@ function loadProjectText(text, opts){
       ? { w:Math.max(280,Math.min(4000,Math.round(z.w))), h:Math.max(200,Math.min(4000,Math.round(z.h))) } : null;
     t.smith=sanSmith(pt.smith);
     t.markers=(Array.isArray(pt.markers)?pt.markers:[]).map(m=>{
-      const f=newFiles[m.fileIndex];
+      const f=slots[m.fileIndex];
       return (f && f.parsed.S[m.key] && Number.isInteger(m.idx) && m.idx>=0 && m.idx<f.parsed.points)
         ? { id:'m'+(++markerCounter), fid:f.id, key:m.key, idx:m.idx } : null;
     }).filter(Boolean);
@@ -3885,6 +3987,7 @@ function loadProjectText(text, opts){
   if (isFinite(p.sidebarWidth)) setSidebarWidth(p.sidebarWidth);
   syncHeaderControls(); renderAll();
   say('project loaded — '+newFiles.length+' file(s), '+tabs.length+' tab(s)', false);
+  if (refused.length) toast('✗ '+refused.length+' file(s) of the project were NOT loaded (the rest was): '+refused.join(' · '), true);
   return true;
 }
 $('projSaveBtn').onclick=saveProject;
@@ -3998,7 +4101,12 @@ $('projNewBtn').onclick=newProject;
       const ok=loadProjectText(raw,{quiet:true});
       window.__restoreTrace+=' ok:'+ok;
       if (ok) toast('↺ previous session restored — "new project" starts clean', false);
-      else idbDel('autosave').catch(()=>{});   // stale/corrupt autosave: drop it quietly
+      else {
+        // unreadable: keep a copy before dropping it, so a future build (or a person) can recover it
+        await idbPut('autosave_unrestored', raw).catch(()=>{});
+        idbDel('autosave').catch(()=>{});
+        toast('✗ the previous session could not be restored — a copy is kept in this browser (key "autosave_unrestored")', true);
+      }
     }
   } catch(e){ window.__restoreTrace='ERR:'+String(e&&e.stack||e).slice(0,200); }
   autosaveEnabled=true;
@@ -4300,7 +4408,8 @@ const CK_TOPO_LABEL={ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'
 const CK_SCHEM_DARK={ bg:'#0e1626', line:'#c7d2e6', ink:'#dbe4f3', ink2:'#8fa3c0', fill:'#1e3a6e', ref:'#a78bfa' };
 const CK_SCHEM_LIGHT={ bg:'#ffffff', line:'#1f2937', ink:'#111827', ink2:'#6b7280', fill:'#e0e7ff', ref:'#7c3aed' };
 const ckNum=v=> (v==null || !isFinite(v))? '' : String(parseFloat((+v).toPrecision(12)));
-const ckFileBase=ch=> (String(ch.name||'list').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/^_+|_+$/g,'')||'list');
+const ckFileBase=ch=> (String(ch.name||'list').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/^[_.]+|[_.]+$/g,'')||'list');
+const ckPlain=s=>String(s).replace(/[\u0000-\u001f\u007f]+/g,' ');   // a newline would end a Touchstone comment
 function ckFmtZ(z, unit){
   if (!z || !isFinite(z.re) || !isFinite(z.im)) return '—';
   return SNP.fmtNum(z.re,5)+(z.im<0?' − j':' + j')+SNP.fmtNum(Math.abs(z.im),5)+(unit||' Ω');
@@ -4312,9 +4421,14 @@ function ckFmtS(re, im){
 }
 function ckModel(ch, res){
   const c=res.cfg;
+  // an edited load that no longer equals the start point must not be labelled as the start point
+  const edited= !res.loadAuto && !res.loadMatchesStart;
   return { name:ch.name, f0Hz:c.f0, z1:res.z1, unit:c.unit, elements:res.circuit.elements,
-    load:res.load, loadStep:res.circuit.start, ref2:c.ref2, show:c.show, sweep:res.sweep };
+    load:res.load, loadStep: edited? null : res.circuit.start, loadEdited:edited, loadErr:res.loadErr||null,
+    ref2:c.ref2, show:c.show, sweep:res.sweep };
 }
+// a save that fails inside the hosted viewer falls back to the clipboard — the window has no other copy action
+const ckSave=(name, text)=>saveTextFile(name, text, { copyOnFail:true });
 
 function openCircuitDialog(ci){
   const sm=state.smith, ch=sm.chains[ci];
@@ -4322,7 +4436,8 @@ function openCircuitDialog(ci){
   ch.circ=SNP.sanCirc(ch.circ);
   const c=ch.circ;
   const uOpts=Object.keys(SNP.CIRC_UNITS).map(u=>'<option'+(u===c.unit?' selected':'')+'>'+u+'</option>').join('');
-  const topoOpts=SNP.CIRC_LOAD_TOPOS.map(t=>'<option value="'+t+'">'+CK_TOPO_LABEL[t]+'</option>').join('');
+  const topoOpts='<option value="">auto (by the sign of X)</option>'
+    +SNP.CIRC_LOAD_TOPOS.map(t=>'<option value="'+t+'">'+CK_TOPO_LABEL[t]+'</option>').join('');
   openModal(
     '<h3>circuit — <span id="ckTitle"></span></h3>'
     +'<p class="ckintro">The list starts at the <b>load</b> (its start point) and walks toward the generator, so port 1 '
@@ -4354,12 +4469,13 @@ function openCircuitDialog(ci){
       '<button class="sbtn" data-ckf="'+f+'">'+lab+'</button>').join('')+'</span>'
     +'</div>'
     +'<svg id="ckPlot" xmlns="http://www.w3.org/2000/svg"></svg>'
+    +'<div id="ckPlotNote" class="cknote warn"></div>'
     +'<div id="ckRead" class="ckread"></div>'
     +'<div id="ckErr" class="moderr"></div>'
     +'<div id="ckNotes" class="cknotes"></div>'
     +'<div class="modbtns">'
     +'<button class="btn ghost" id="ckS2pNet" title="the matching network alone, BOTH ports referenced to the port-1 Z₀ — standard Touchstone any tool (this one included) reads">⬇ network .s2p</button>'
-    +'<button class="btn ghost" id="ckS2pLoad" title="exactly what is plotted: port 2 referenced to Z_L(f), power waves, one ! Port Impedance line per frequency (scikit-rf / HFSS convention — scikit-rf reads it back exactly; this app refuses it on import)">⬇ as plotted .s2p</button>'
+    +'<button class="btn ghost" id="ckS2pLoad" title="exactly what is plotted: port 2 referenced to Z_L(f), power waves, one ! Port Impedance line per frequency (scikit-rf / HFSS convention — scikit-rf reads it back exactly; this app refuses it on import unless every port impedance in it is one real value)">⬇ as plotted .s2p</button>'
     +'<button class="btn ghost" id="ckPy" title="a scikit-rf script that builds the same circuit, plots it and writes the Touchstone files">⬇ scikit-rf .py</button>'
     +'<button class="btn ghost" id="ckSvg" title="the schematic as a standalone SVG (white background)">⬇ schematic .svg</button>'
     +'<button class="btn" id="ckClose">close</button>'
@@ -4368,7 +4484,7 @@ function openCircuitDialog(ci){
   let res=null, geom=null;
   const mult=()=>SNP.CIRC_UNITS[c.unit];
   const fld=id=>$(id);
-  const setVal=(id, v, force)=>{ const el=fld(id); if (force || document.activeElement!==el) el.value=v; };
+  const setVal=(id, v, force)=>{ const el=fld(id); if (force || document.activeElement!==el){ el.value=v; el.classList.remove('bad'); } };
   const numIn=(id, ok)=>{                          // a positive number, or null (field marked)
     const el=fld(id), s=el.value.trim(), v=Number(s);
     const good= s!=='' && isFinite(v) && ok(v);
@@ -4381,12 +4497,13 @@ function openCircuitDialog(ci){
     setVal('ckFa', ckNum(sw.startHz/mult()), force);
     setVal('ckFb', ckNum(sw.stopHz/mult()), force);
     setVal('ckN', String(c.n), force);
+    setVal('ckZ1', c.z1!=null? ckNum(c.z1) : '', force);   // empty = the chart Z0 (shown as the placeholder)
     $('ckSwU').textContent=c.unit;
   };
   const fillLoad=force=>{
     if (!res || !res.load) return;
     const ld=res.load;
-    $('ckTopo').value=ld.topo;
+    $('ckTopo').value= c.loadTopo || '';
     const isC= ld.topo==='sRC' || ld.topo==='pRC';
     $('ckXlab').style.display= ld.topo==='R'? 'none' : '';
     $('ckXl').textContent= isC? 'C' : 'L';
@@ -4399,6 +4516,7 @@ function openCircuitDialog(ci){
     res=SNP.circuitSolve(ch.steps, sm.z0, c);
     ch.circ=res.cfg; Object.assign(c, res.cfg);
     const circ=res.circuit;
+    for (const id of ['ckTopo','ckR','ckX','ckReset']) $(id).disabled=!circ;   // no list, no load to edit
     $('ckTitle').textContent=ch.name+(circ? ' · steps '+(circ.start+1)+'–'+ch.steps.length+' · port 1 → load' : '');
     $('ckZ1').placeholder= circ? ckNum(circ.z1) : '';
     $('ckRef2').value=c.ref2;
@@ -4415,26 +4533,37 @@ function openCircuitDialog(ci){
       else if (res.loadMatchesStart) ln.textContent='edited — still equals the '+zs;
       else { ln.textContent='edited: Z_L(f₀) = '+ckFmtZ(res.loadAtF0)+' ≠ '+zs; ln.className='cknote warn'; }
     } else ln.textContent='';
-    // schematic
+    // schematic — a drawing failure must never leave the rest of the window stale
+    let schemOk=false;
     if (circ){
-      const s=SNP.circuitSchematicSvg(ckModel(ch, res), { pal:CK_SCHEM_DARK });
-      $('ckSchem').innerHTML=s.svg;
+      try { $('ckSchem').innerHTML=SNP.circuitSchematicSvg(ckModel(ch, res), { pal:CK_SCHEM_DARK }).svg; schemOk=true; }
+      catch(e){ $('ckSchem').innerHTML='<div class="empty" style="padding:14px">✗ schematic: '+esc((e&&e.message)||e)+'</div>'; }
     } else $('ckSchem').innerHTML='<div class="empty" style="padding:14px">'+esc(res.error||'')+'</div>';
     $('ckErr').textContent= res.ok? '' : (res.error||'');
-    $('ckNotes').innerHTML=(res.notes||[]).map(n=>'<div>· '+esc(n)+'</div>').join('')
-      +(res.ok && c.ref2==='z0'? '<div>· port 2 at Z₀: these are the network\'s own S-parameters — S11 is NOT the input match with the load attached</div>' : '');
+    const extra=[];
+    if (res.ok && c.ref2==='z0') extra.push('port 2 at Z₀: these are the network\'s own S-parameters — S11 is NOT the input match with the load attached (Z_in in the readout is)');
+    if (circ){
+      if (ch.cursor!=null && ch.cursor<ch.steps.length-1)
+        extra.push('the chart\'s slideshow shows steps 1–'+(ch.cursor+1)+'; the circuit uses all '+ch.steps.length+' steps');
+      const hid=[];
+      for (let i=circ.start;i<ch.steps.length;i++) if (ch.steps[i].hide) hid.push(i+1);
+      if (hid.length) extra.push('step'+(hid.length>1?'s ':' ')+hid.join(', ')+(hid.length>1?' are':' is')+' hidden on the chart but part of the circuit');
+    }
+    $('ckNotes').innerHTML=(res.notes||[]).concat(extra).map(n=>'<div>· '+esc(n)+'</div>').join('');
     $('ckS2pLoad').style.display= c.ref2==='load'? '' : 'none';
     for (const id of ['ckS2pNet','ckS2pLoad','ckPy']) $(id).disabled=!res.ok;
-    $('ckSvg').disabled=!circ;
+    $('ckSvg').disabled=!schemOk;
     drawPlot();
     staticRead();
+    fillFreq(false);                                 // a new f0 moves the default sweep: show it
+    fillLoad(false);
   };
   const commit=()=>{ refresh(); scheduleAutosave(); };
 
   const staticRead=()=>{
     if (!res || !res.ok){ $('ckRead').textContent=''; return; }
     const a=res.at0, k=0;
-    const parts=['at f₀ = '+SNP.fmtNum(c.f0/mult(),8)+' '+c.unit+':  Z_in = '+ckFmtZ({ re:a.zin.re[k], im:a.zin.im[k] })];
+    const parts=['at f₀ = '+SNP.fmtNum(c.f0/mult(),8)+' '+c.unit+':  Z_in (load attached) = '+ckFmtZ({ re:a.zin.re[k], im:a.zin.im[k] })];
     for (const [s,key,lab] of CK_KEYS) parts.push(lab+' '+ckFmtS(a.S[key].re[k], a.S[key].im[k]));
     let chk='';
     if (res.f0Check) chk= res.f0Check.ok? '  ✓ Z_in equals the chart\'s last point' : '  ✗ internal check: Z_in differs from the chart\'s last point by '+SNP.fmtNum(res.f0Check.dz,3)+' Ω';
@@ -4448,6 +4577,7 @@ function openCircuitDialog(ci){
     const W=Math.max(240, Math.round(r.width)), H=Math.max(180, Math.round(r.height));
     el.setAttribute('viewBox','0 0 '+W+' '+H);
     geom=null;
+    const pn=$('ckPlotNote'); if (pn) pn.textContent='';
     if (!res || !res.ok){
       el.innerHTML='<text x="'+W/2+'" y="'+H/2+'" text-anchor="middle" fill="var(--ink3)" style="font-size:12.5px">'+esc(res && res.error || '')+'</text>';
       return;
@@ -4498,15 +4628,39 @@ function openCircuitDialog(ci){
         yt=SNP.ticks(y0, y1, Math.max(3, Math.round(h/48)));
       }
       const yp=v=>mt+(y1-v)/(y1-y0)*h;
+      // samples a dB plot cannot show are SAID, never dropped silently: below the 100 dB window,
+      // or |S| exactly 0 (−∞ dB)
+      if (c.fmt==='db'){
+        const msg=[];
+        keys.forEach(([s,key,lab],i)=>{
+          let below=0, minV=Infinity, zeros=0, zf=null;
+          for (let k=0;k<fHz.length;k++){
+            const v=ys[i][k];
+            if (isFinite(v)){ if (v<y0){ below++; if (v<minV) minV=v; } }
+            else if (S[key].re[k]===0 && S[key].im[k]===0){ zeros++; if (zf==null) zf=fHz[k]; }
+          }
+          if (below) msg.push(lab+': '+below+' of '+fHz.length+' points lie below the plotted window (down to '+SNP.fmtNum(minV,5)+' dB) — not drawn');
+          if (zeros) msg.push(lab+' = 0 exactly (−∞ dB) at '+zeros+' point'+(zeros>1?'s':'')+(zf!=null?' (first at '+SNP.fmtNum(zf/mult(),8)+' '+c.unit+')':'')+' — not drawable in dB');
+        });
+        if (pn) pn.textContent=msg.join(' · ');
+      }
+      const inside=v=>{ const Y=yp(v); return Y>=mt-0.5 && Y<=mt+h+0.5; };
+      // log axis: 1-2-5 decades, denser mantissas for a short span, linear ticks if still too few
+      const logTicks=ms=>{ const t=[];
+        for (let e=Math.floor(Math.log10(x0)); e<=Math.ceil(Math.log10(x1)); e++)
+          for (const mm of ms){ const v=mm*Math.pow(10,e); if (v>=x0*(1-1e-12) && v<=x1*(1+1e-12)) t.push(v); }
+        return t; };
       let xt;
       if (lg){
-        xt=[];
-        for (let e=Math.floor(Math.log10(x0)); e<=Math.ceil(Math.log10(x1)); e++)
-          for (const mm of [1,2,5]){ const v=mm*Math.pow(10,e); if (v>=x0*(1-1e-12) && v<=x1*(1+1e-12)) xt.push(v); }
+        xt=logTicks([1,2,5]);
+        if (xt.length<3) xt=logTicks([1,2,3,4,5,6,7,8,9]);
+        if (xt.length<3) xt=SNP.ticks(x0, x1, 4);
       } else xt=SNP.ticks(x0, x1, Math.max(3, Math.round(w/100)));
       g+='<defs><clipPath id="ckClipR"><rect x="'+ml+'" y="'+mt+'" width="'+w+'" height="'+h+'"/></clipPath></defs>';
-      for (const v of xt){ const X=xp(v); g+='<line x1="'+X+'" y1="'+mt+'" x2="'+X+'" y2="'+(mt+h)+'" stroke="var(--grid)"/>'
-        +'<text x="'+X+'" y="'+(mt+h+15)+'" text-anchor="middle">'+SNP.fmtNum(v/mult(),6)+'</text>'; }
+      let lastLab=-Infinity;
+      for (const v of xt){ const X=xp(v);
+        g+='<line x1="'+X+'" y1="'+mt+'" x2="'+X+'" y2="'+(mt+h)+'" stroke="var(--grid)"/>';
+        if (X-lastLab>=48){ g+='<text x="'+X+'" y="'+(mt+h+15)+'" text-anchor="middle">'+SNP.fmtNum(v/mult(),6)+'</text>'; lastLab=X; } }
       for (const v of yt){ const Y=yp(v); g+='<line x1="'+ml+'" y1="'+Y+'" x2="'+(ml+w)+'" y2="'+Y+'" stroke="var(--grid)"/>'
         +'<text x="'+(ml-7)+'" y="'+(Y+3.5)+'" text-anchor="end">'+SNP.fmtNum(v,5)+'</text>'; }
       g+='<rect x="'+ml+'" y="'+mt+'" width="'+w+'" height="'+h+'" fill="none" stroke="var(--axis)"/>';
@@ -4530,7 +4684,7 @@ function openCircuitDialog(ci){
         tp+='<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-linejoin="round"'+ckDash(key)+'/>';
       });
       g+='<g clip-path="url(#ckClipR)">'+tp+'</g>';
-      geom={ mode:'xy', xp, yp, ml, w, mt, h, x0, x1, lg, ys };
+      geom={ mode:'xy', xp, yp, ml, w, mt, h, x0, x1, lg, ys, inside };
     }
     // legend
     keys.forEach(([s,key,lab],i)=>{
@@ -4558,10 +4712,12 @@ function openCircuitDialog(ci){
       const t=(mx-geom.ml)/geom.w;
       const f= geom.lg? geom.x0*Math.pow(geom.x1/geom.x0, t) : geom.x0+t*(geom.x1-geom.x0);
       k=SNP.nearestIdx(fHz, f);
+      // nearest by POSITION: on a log axis the arithmetic midpoint is not the pixel midpoint
+      for (const q of [k-1, k+1]) if (q>=0 && q<fHz.length && Math.abs(geom.xp(fHz[q])-mx)<Math.abs(geom.xp(fHz[k])-mx)) k=q;
       const X=geom.xp(fHz[k]);
       hov='<line x1="'+X+'" y1="'+geom.mt+'" x2="'+X+'" y2="'+(geom.mt+geom.h)+'" stroke="var(--ink2)" stroke-width="1"/>';
       keys.forEach(([s,key],i)=>{ const v=geom.ys[i][k];
-        if (isFinite(v)) hov+='<circle cx="'+X+'" cy="'+geom.yp(v)+'" r="3.5" fill="'+chipColor(key)+'"/>'; });
+        if (isFinite(v) && geom.inside(v)) hov+='<circle cx="'+X+'" cy="'+geom.yp(v)+'" r="3.5" fill="'+chipColor(key)+'"/>'; });
     } else {
       let best=Infinity;
       for (const [s,key] of keys) for (let q=0;q<fHz.length;q++){
@@ -4575,14 +4731,14 @@ function openCircuitDialog(ci){
         if (isFinite(re)&&isFinite(im)) hov+='<circle cx="'+geom.gx(re)+'" cy="'+geom.gy(im)+'" r="5" fill="none" stroke="'+chipColor(key)+'" stroke-width="2"/>'; }
     }
     $('ckHov').innerHTML=hov;
-    const parts=['f = '+SNP.fmtNum(fHz[k]/mult(),8)+' '+c.unit+':  Z_in = '+ckFmtZ({ re:res.res.zin.re[k], im:res.res.zin.im[k] })];
+    const parts=['f = '+SNP.fmtNum(fHz[k]/mult(),8)+' '+c.unit+':  Z_in (load attached) = '+ckFmtZ({ re:res.res.zin.re[k], im:res.res.zin.im[k] })];
     for (const [s,key,lab] of CK_KEYS) parts.push(lab+' '+ckFmtS(S[key].re[k], S[key].im[k]));
     $('ckRead').textContent=parts.join('   ');
   });
   plotEl.addEventListener('mouseleave',()=>{ const h=$('ckHov'); if (h) h.innerHTML=''; staticRead(); });
 
   // ---- inputs ----
-  $('ckF0').addEventListener('input',()=>{ const v=numIn('ckF0', x=>x>0); if (v!=null){ c.f0=v*mult(); commit(); fillLoad(); } });
+  $('ckF0').addEventListener('input',()=>{ const v=numIn('ckF0', x=>x>0); if (v!=null){ c.f0=v*mult(); commit(); } });
   $('ckUnit').addEventListener('change',()=>{ c.unit=$('ckUnit').value; commit(); fillFreq(true); });
   $('ckZ1').addEventListener('input',()=>{
     const s=$('ckZ1').value.trim();
@@ -4590,22 +4746,28 @@ function openCircuitDialog(ci){
     const v=numIn('ckZ1', x=>x>0); if (v!=null){ c.z1=v; commit(); }
   });
   $('ckRef2').addEventListener('change',()=>{ c.ref2=$('ckRef2').value==='z0'? 'z0' : 'load'; commit(); });
-  $('ckTopo').addEventListener('change',()=>{ c.loadTopo=$('ckTopo').value; c.loadAuto=true; commit(); fillLoad(true); });
+  $('ckTopo').addEventListener('change',()=>{ c.loadTopo=$('ckTopo').value||null; c.loadAuto=true; commit(); fillLoad(true); });
   const takeOver=()=>{                             // first edit of a fitted load: start from the fit
-    if (!c.loadAuto) return;
+    if (!c.loadAuto) return true;
     const ld=res && res.load;
-    c.loadTopo= ld? ld.topo : $('ckTopo').value;
-    c.loadR= ld? ld.R : null; c.loadC= ld? ld.C : null; c.loadL= ld? ld.L : null;
+    if (!ld) return false;                         // no list, no load to edit
+    c.loadTopo=ld.topo;
+    c.loadR= Number.isFinite(ld.R)? ld.R : null; c.loadC= ld.C; c.loadL= ld.L;
     c.loadAuto=false;
+    return true;
   };
-  $('ckR').addEventListener('input',()=>{ const v=numIn('ckR', x=>x>=0); if (v!=null){ takeOver(); c.loadR=v; commit(); } });
+  $('ckR').addEventListener('input',()=>{ const v=numIn('ckR', x=>x>=0); if (v!=null && takeOver()){ c.loadR=v; commit(); } });
   $('ckX').addEventListener('input',()=>{
-    const v=numIn('ckX', x=>x>0); if (v==null) return;
-    takeOver();
+    const v=numIn('ckX', x=>x>0); if (v==null || !takeOver()) return;
     if (c.loadTopo==='sRC' || c.loadTopo==='pRC') c.loadC=v*1e-12; else c.loadL=v*1e-9;
     commit();
   });
-  $('ckReset').onclick=()=>{ c.loadAuto=true; commit(); fillLoad(true); };
+  $('ckReset').onclick=()=>{
+    c.loadAuto=true;
+    // a pinned topology that cannot reproduce the start point goes back to automatic
+    if (c.loadTopo && res && res.circuit && SNP.circLoadFromZ(res.circuit.zLoad0, c.f0, c.loadTopo).err) c.loadTopo=null;
+    commit(); fillLoad(true);
+  };
   $('ckFa').addEventListener('input',()=>{ const v=numIn('ckFa', x=>x>0); if (v!=null){ c.fStart=v*mult(); if (c.fStop==null) c.fStop=res&&res.sweep? res.sweep.stopHz : 1.5*c.f0; commit(); } });
   $('ckFb').addEventListener('input',()=>{ const v=numIn('ckFb', x=>x>0); if (v!=null){ c.fStop=v*mult(); if (c.fStart==null) c.fStart=res&&res.sweep? res.sweep.startHz : c.f0/2; commit(); } });
   $('ckN').addEventListener('input',()=>{ const v=numIn('ckN', x=>Number.isInteger(x) && x>=2 && x<=20001); if (v!=null){ c.n=v; commit(); } });
@@ -4617,15 +4779,18 @@ function openCircuitDialog(ci){
   const base=ckFileBase(ch);
   const header=()=>{
     const ld=res.load, m=ckModel(ch, res);
-    const h=['S-Param Studio circuit MODEL of design list "'+ch.name+'" — computed, not measured',
+    const h=['S-Param Studio circuit MODEL of design list "'+ckPlain(ch.name)+'" — computed, not measured',
       'values defined at f0 = '+res.cfg.f0+' Hz; reactances as L/C, lines TEM lossless (theta proportional to f)',
       'network, port 1 -> load:'];
     for (const e of m.elements){
       if (e.type==='line') h.push('  step '+(e.step+1)+': line Z0 = '+e.z0+' ohm, '+e.deg+' deg at f0');
-      else h.push('  step '+(e.step+1)+': '+e.type+' ('+(e.form==='z'?'Z: R in series':'Y: R in parallel')+')'
-        +(e.R!=null?'  R = '+e.R+' ohm':'')+(e.L!=null?'  L = '+e.L+' H':'')+(e.C!=null?'  C = '+e.C+' F':''));
+      else {
+        const nParts=(e.R!=null)+(e.L!=null)+(e.C!=null);
+        h.push('  step '+(e.step+1)+': '+e.type+(e.R!=null && nParts>1? ' (typed as '+(e.form==='z'?'Z: R in series':'Y: R in parallel')+')' : '')
+          +(e.R!=null?'  R = '+e.R+' ohm':'')+(e.L!=null?'  L = '+e.L+' H':'')+(e.C!=null?'  C = '+e.C+' F':''));
+      }
     }
-    h.push('load ('+CK_TOPO_LABEL[ld.topo]+'):  R = '+ld.R+' ohm'+(ld.C!=null?'  C = '+ld.C+' F':'')+(ld.L!=null?'  L = '+ld.L+' H':''));
+    h.push('load ('+CK_TOPO_LABEL[ld.topo]+(m.loadEdited? ', EDITED - not the start point' : '')+'):  R = '+ld.R+' ohm'+(ld.C!=null?'  C = '+ld.C+' F':'')+(ld.L!=null?'  L = '+ld.L+' H':''));
     return h;
   };
   $('ckS2pNet').onclick=()=>{
@@ -4634,9 +4799,16 @@ function openCircuitDialog(ci){
     if (net.singular){ toast('✗ the network is singular at '+net.singular+' point(s) — no .s2p written', false); return; }
     const text=SNP.serializeTouchstone({ nPorts:2, z0:res.z1, freqHz:res.freqHz, S:net.S },
       { comments:header().concat(['this file: the network ALONE, both ports referenced to '+res.z1+' ohm (the load is NOT included)']) });
+    // the file must read back to EXACTLY what was computed — reference, frequencies and every entry
     const back=SNP.parseTouchstone(base+'_network.s2p', text);
-    if (!back.ok || back.points!==res.freqHz.length){ toast('✗ internal: the .s2p did not re-parse ('+(back.error||'points')+')', true); return; }
-    saveTextFile(base+'_network.s2p', text);
+    let same= back.ok && back.points===res.freqHz.length && back.z0===res.z1;
+    if (same) for (let k=0;k<res.freqHz.length && same;k++){
+      if (back.freqHz[k]!==res.freqHz[k]) same=false;
+      for (const key of ['1,1','2,1','1,2','2,2'])
+        if (back.S[key].re[k]!==net.S[key].re[k] || back.S[key].im[k]!==net.S[key].im[k]) same=false;
+    }
+    if (!same){ toast('✗ internal: the .s2p does not read back to what was computed ('+(back.error||'values differ')+') — not written', true); return; }
+    ckSave(base+'_network.s2p', text);
   };
   $('ckS2pLoad').onclick=()=>{
     if (!res || !res.ok || c.ref2!=='load') return;
@@ -4645,17 +4817,18 @@ function openCircuitDialog(ci){
     try {
       const text=SNP.serializeTouchstonePortZ(res.freqHz, res.res.S, [p1, res.res.zref2],
         header().concat(['this file: port 2 referenced to Z_L(f) (power waves); per-frequency port impedances below each line']));
-      saveTextFile(base+'_load_ref.s2p', text);
+      ckSave(base+'_load_ref.s2p', text);
     } catch(e){ toast('✗ not written: '+((e&&e.message)||e), false); }
   };
   $('ckPy').onclick=()=>{
     if (!res || !res.ok) return;
-    try { saveTextFile(base+'_circuit.py', SNP.circuitSkrfScript(ckModel(ch, res))); }
+    try { ckSave(base+'_circuit.py', SNP.circuitSkrfScript(ckModel(ch, res))); }
     catch(e){ toast('✗ script not written: '+((e&&e.message)||e), false); }
   };
   $('ckSvg').onclick=()=>{
     if (!res || !res.circuit) return;
-    saveTextFile(base+'_schematic.svg', SNP.circuitSchematicSvg(ckModel(ch, res), { pal:CK_SCHEM_LIGHT }).svg);
+    try { ckSave(base+'_schematic.svg', SNP.circuitSchematicSvg(ckModel(ch, res), { pal:CK_SCHEM_LIGHT }).svg); }
+    catch(e){ toast('✗ schematic not written: '+((e&&e.message)||e), false); }
   };
   $('ckClose').onclick=closeModal;
 
@@ -4663,6 +4836,9 @@ function openCircuitDialog(ci){
   fillFreq(true);
   fillLoad(true);
   drawPlot();                                      // the plot box has its final size now
+  // redraw on resize (window or modal); the observer lets go once the window is closed
+  const ro=new ResizeObserver(()=>{ if (document.body.contains(plotEl)) drawPlot(); else ro.disconnect(); });
+  ro.observe(plotEl);
 }
 
 // test / automation hook — same code paths as the UI
