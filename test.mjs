@@ -1115,5 +1115,100 @@ function parsePair(name, txt) { const p = SNP.parseTouchstone(name, txt); if (!p
       new RegExp("state\\.smith\\." + k + "=\\$\\('sm" + (k==='hlR1'?'HlR1':'HlG1') + "'\\)\\.checked; renderPlot\\(\\); scheduleAutosave\\(\\)").test(html));
 }
 
+// ---------- 42. the circuit window: a design list as a circuit + S-parameters ----------
+{
+  const st = (o) => ({ q: 'z', norm: true, value: '', z0line: 50, eleDeg: 45, swr: false, z0new: 50, color: '#e11d48', op: 1, hide: false, hl: false, ...o });
+  // L-match 100 ohm -> 50: shunt y = +j0.5 then series z = +j1 (normalised) at f0
+  const lm = [st({ kind: 'start', value: '2' }), st({ kind: 'shunt', q: 'y', value: 'j0.5' }), st({ kind: 'series', value: 'j1' })];
+  const r = SNP.circuitSolve(lm, 50, { f0: 1e9, n: 21, fStart: 0.5e9, fStop: 1.5e9 });
+  check('circuit: L-match solves', r.ok, r.error);
+  const ci = r.circuit;
+  check('circuit: elements run port 1 -> load', ci.elements.map(e => e.type).join(',') === 'series,shunt');
+  check('circuit: series j50 at 1 GHz is L = 50/w0', approx(ci.elements[0].L, 50 / (2 * Math.PI * 1e9), 1e-12));
+  check('circuit: shunt +j0.01 S at 1 GHz is C = 0.01/w0', approx(ci.elements[1].C, 0.01 / (2 * Math.PI * 1e9), 1e-12));
+  check('circuit: the fitted load is a 100 ohm resistor', r.load.topo === 'R' && r.load.R === 100);
+  check('circuit: Z_in(f0) is the chart\'s last point', r.f0Check && r.f0Check.ok, JSON.stringify(r.f0Check));
+  const k0 = SNP.nearestIdx(r.freqHz, 1e9);
+  const S = r.res.S;
+  check('circuit: matched at f0 -> |S11| ~ 0', Math.hypot(S['1,1'].re[k0], S['1,1'].im[k0]) < 1e-12);
+  check('circuit: matched at f0 -> |S21| = 1', approx(Math.hypot(S['2,1'].re[k0], S['2,1'].im[k0]), 1, 1e-12));
+  let lossless = true, recip = true;
+  for (let k = 0; k < r.freqHz.length; k++) {
+    const a = S['1,1'].re[k] ** 2 + S['1,1'].im[k] ** 2 + S['2,1'].re[k] ** 2 + S['2,1'].im[k] ** 2;
+    if (!approx(a, 1, 1e-12)) lossless = false;
+    if (!approx(S['1,2'].re[k], S['2,1'].re[k], 1e-12) || !approx(S['1,2'].im[k], S['2,1'].im[k], 1e-12)) recip = false;
+  }
+  check('circuit: lossless network -> |S11|^2 + |S21|^2 = 1 at every point', lossless);
+  check('circuit: reciprocal network -> S12 = S21', recip);
+  // Z_in(f0) == chart endpoint for random chains (norm/abs, z/y, lines, renorm)
+  let rnd = 12345; const R = () => (rnd = (rnd * 1103515245 + 12345) % 2147483648) / 2147483648;
+  let bad = 0, tried = 0;
+  for (let t = 0; t < 150; t++) {
+    const steps = [st({ kind: 'start', value: (0.2 + 3 * R()).toFixed(3) + (R() < 0.5 ? '-j' : '+j') + (2 * R()).toFixed(3) })];
+    const n = 1 + Math.floor(R() * 5);
+    for (let i = 0; i < n; i++) {
+      const u = R();
+      if (u < 0.3) steps.push(st({ kind: 'series', q: R() < 0.5 ? 'z' : 'y', norm: R() < 0.7, value: (R() < 0.3 ? (R() * 0.5).toFixed(2) : '') + (R() < 0.5 ? '-j' : '+j') + (0.1 + R()).toFixed(3) }));
+      else if (u < 0.6) steps.push(st({ kind: 'shunt', q: R() < 0.5 ? 'z' : 'y', norm: R() < 0.7, value: (R() < 0.3 ? (R() * 0.5).toFixed(2) : '') + (R() < 0.5 ? '-j' : '+j') + (0.1 + R()).toFixed(3) }));
+      else if (u < 0.9) steps.push(st({ kind: 'line', z0line: 20 + 80 * R(), eleDeg: 5 + 170 * R() }));
+      else steps.push(st({ kind: 'renorm', z0new: 25 + 75 * R() }));
+    }
+    const res = SNP.circuitSolve(steps, 50, { f0: 3e9, n: 5 });
+    if (!res.ok || !res.f0Check) continue;
+    tried++; if (!res.f0Check.ok) bad++;
+  }
+  check('circuit: Z_in(f0) equals the chart endpoint on random chains', tried > 80 && bad === 0, tried + ' tried, ' + bad + ' bad');
+  // load fits reproduce the start point exactly, per topology
+  for (const [topo, z] of [['sRC', { re: 30, im: -40 }], ['pRC', { re: 30, im: -40 }], ['sRL', { re: 30, im: 40 }], ['pRL', { re: 30, im: 40 }]]) {
+    const ld = SNP.circLoadFromZ(z, 2e9, topo); const zz = SNP.circLoadZ(ld, 2e9);
+    check('circuit: ' + topo + ' fit reproduces the start point', !ld.err && approx(zz.re, z.re, 1e-12) && approx(zz.im, z.im, 1e-12));
+  }
+  check('circuit: a capacitive point refuses series RL', !!SNP.circLoadFromZ({ re: 30, im: -40 }, 2e9, 'sRL').err);
+  check('circuit: no start point is refused', !SNP.circuitSolve([st({ kind: 'series', value: 'j1' })], 50, {}).ok);
+  // port 2 at a load that absorbs nothing: S21/S22 undefined, S11 defined
+  const nr = SNP.circuitSolve([st({ kind: 'start', value: '-j1' }), st({ kind: 'series', value: 'j0.5' })], 50, { f0: 1e9, n: 3 });
+  check('circuit: Re Z_L = 0 -> S21 undefined, S11 defined', nr.ok && isNaN(nr.res.S['2,1'].re[1]) && isFinite(nr.res.S['1,1'].re[1]));
+  // the network .s2p (both ports at Z0) round-trips bit-exactly through our own parser
+  const net = SNP.circuitSparams(r.circuit, r.load, r.z1, r.freqHz, 'z0');
+  const txt = SNP.serializeTouchstone({ nPorts: 2, z0: r.z1, freqHz: r.freqHz, S: net.S });
+  const back = SNP.parseTouchstone('n.s2p', txt);
+  let exact = back.ok;
+  for (const key of ['1,1', '2,1', '1,2', '2,2']) for (let k = 0; k < r.freqHz.length; k++)
+    if (back.S[key].re[k] !== net.S[key].re[k] || back.S[key].im[k] !== net.S[key].im[k]) exact = false;
+  check('circuit: network .s2p round-trips bit-exactly', exact);
+  // the as-plotted file (per-frequency port impedances) is REFUSED on import, never mislabelled
+  const n = r.freqHz.length;
+  const p1 = { re: new Float64Array(n).fill(50), im: new Float64Array(n) };
+  const asPlot = SNP.serializeTouchstonePortZ(r.freqHz, r.res.S, [p1, { re: new Float64Array(n).fill(100), im: new Float64Array(n) }], []);
+  const ap = SNP.parseTouchstone('a.s2p', asPlot);
+  check('parser: per-port impedances that differ are refused', !ap.ok && /renormaliz/i.test(ap.error), ap.error);
+  // schematic: well-formed, escaped, inline-styled text
+  const model = { name: 'a<b>&"c', f0Hz: 1e9, z1: 50, elements: r.circuit.elements, load: r.load, loadStep: 0, ref2: 'load' };
+  const sv = SNP.circuitSchematicSvg(model).svg;
+  check('schematic: list name is escaped', sv.includes('a&lt;b&gt;&amp;&quot;c') && !sv.includes('a<b>'));
+  check('schematic: text is styled inline (beats a host svg text rule)', /<text [^>]*style="font-size:/.test(sv) && !/<text [^>]*\sfill="/.test(sv));
+}
+
+// ---------- 43. parser: "! Port Impedance" lines ----------
+{
+  const body = (z) => '# GHz S RI R 50\n1 0.1 0 0.9 0 0.9 0 0.1 0\n! Port Impedance ' + z + '\n2 0.1 0 0.9 0 0.9 0 0.1 0\n! Port Impedance ' + z + '\n';
+  const ok = SNP.parseTouchstone('x.s2p', body('50 0 50 0'));
+  check('parser: AEDT renormalized export (Port Impedance = R) still loads', ok.ok && ok.z0 === 50, ok.error);
+  const no = SNP.parseTouchstone('x.s2p', body('48.2 -0.3 50 0'));
+  check('parser: a non-renormalized export is refused', !no.ok && /48\.2/.test(no.error), no.error);
+  const bad = SNP.parseTouchstone('x.s2p', body('50 0 50'));
+  check('parser: an unreadable Port Impedance line is refused', !bad.ok);
+  const rn = SNP.parseTouchstone('x.s2p', '# GHz S RI R\n1 0.1 0 0.9 0 0.9 0 0.1 0\n! Port Impedance 75 0 75 0\n');
+  check('parser: "R" with no value takes the agreeing Port Impedance', rn.ok && rn.z0 === 75 && rn.warnings.some(w => /no value/.test(w)), rn.error);
+  const rw = SNP.parseTouchstone('x.s2p', '# GHz S RI R\n1 0.1 0 0.9 0 0.9 0 0.1 0\n');
+  check('parser: "R" with no value and no Port Impedance warns', rw.ok && rw.z0 === 50 && rw.warnings.some(w => /no value/.test(w)));
+  // wiring: the button, its handler, the saved settings
+  check('wiring: every list header has the circuit button', /data-ccirc="'\+ci\+'"/.test(html));
+  check('wiring: the button opens the circuit window', /\[data-ccirc\]'\)\.forEach\(b=>b\.onclick=\(\)=>openCircuitDialog\(\+b\.dataset\.ccirc\)\)/.test(html));
+  const kept = SNP.sanSmith({ chains: [{ name: 'a', steps: [], circ: { f0: 2.5e9, fmt: 'smith', ref2: 'z0' } }] }).chains[0].circ;
+  check('wiring: the list keeps its circuit settings', kept && kept.f0 === 2.5e9 && kept.fmt === 'smith' && kept.ref2 === 'z0');
+  check('wiring: a list that never opened the window carries no settings', !('circ' in SNP.sanSmith({ chains: [{ name: 'a', steps: [] }] }).chains[0]));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed' + (fail ? '\n' + failures.join('\n') : ''));
 process.exit(fail ? 1 : 0);

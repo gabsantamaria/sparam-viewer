@@ -158,6 +158,25 @@
   .mergetab .mname{ max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .modbtns{ display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
   .moderr{ color:#f87171; font-size:12px; min-height:16px; margin-top:8px; white-space:pre-wrap; }
+  .modal.wide{ width:min(96vw,1180px); max-height:92vh; }
+  .modal.wide .modbtns{ flex-wrap:wrap; }
+  .ckintro{ margin-top:0 !important; }
+  .ckctl{ display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin:8px 0; color:var(--ink2); font-size:12px; }
+  .ckctl label{ display:flex; align-items:center; gap:5px; white-space:nowrap; }
+  .ckctl input.ckn{ width:6.6em; }
+  .ckctl input.bad{ border-color:#ef4444; outline:1px solid #ef4444; }
+  .ckctl .ckspacer{ flex:1; }
+  .ckctl .ckseg{ display:inline-flex; gap:3px; }
+  .ckctl .sbtn{ font-size:12px; padding:2px 8px; }
+  .ckctl .ckshow.on{ background:var(--ckc); border-color:var(--ckc); color:#fff; }
+  .cknote{ color:var(--ink3); font-size:11.5px; }
+  .cknote.warn{ color:#f59e0b; }
+  .cknote.bad{ color:#f87171; }
+  .ckschem{ overflow-x:auto; background:#0e1626; border:1px solid var(--line2); border-radius:6px; margin:6px 0; }
+  .ckschem svg{ display:block; }
+  #ckPlot{ display:block; width:100%; height:min(46vh,430px); background:var(--panel2); border:1px solid var(--line2); border-radius:6px; }
+  .ckread{ font-size:11.5px; color:var(--ink2); min-height:17px; margin-top:6px; white-space:pre-wrap; }
+  .cknotes{ font-size:11.5px; color:var(--ink3); }
   .axbtn{
     width:26px; height:20px; padding:0; font:inherit; font-size:11px; border-radius:4px;
     border:1px solid var(--line); background:var(--panel2); color:var(--ink3); cursor:pointer;
@@ -432,11 +451,16 @@ const SNP = (function(){
     let unit='ghz', fmt='ma', z0=50, paramType='s', sawOption=false;
     let v2=false, dataOrder=null, matrixFormat='full', inData=true, ended=false;
     let refPending=false; const refVals=[];
+    let rNoValue=false; const portZLines=[];   // "! Port Impedance re im …" (HFSS / scikit-rf)
     const tokens=[];
 
     for (const raw of String(text).split(/\r\n|\r|\n/)){
       if (ended) break;
       const bang = raw.indexOf('!');
+      if (bang>=0){
+        const pz=/^\s*port\s+impedance\s*[:=]?(.*)$/i.exec(raw.slice(bang+1));
+        if (pz) portZLines.push(pz[1]);
+      }
       const line = (bang>=0 ? raw.slice(0,bang) : raw).trim();
       if (!line) continue;
 
@@ -478,7 +502,7 @@ const SNP = (function(){
           if (w in FREQ_MULT) unit=w;
           else if (w==='s'||w==='y'||w==='z'||w==='g'||w==='h') paramType=w;
           else if (w==='db'||w==='ma'||w==='ri') fmt=w;
-          else if (w==='r'){ const v=parseFloat(t[i+1]); if (Number.isFinite(v)){ z0=v; i++; } }
+          else if (w==='r'){ const v=parseFloat(t[i+1]); if (Number.isFinite(v)){ z0=v; i++; } else rNoValue=true; }
           else warnings.push('Unknown option token "'+t[i]+'" ignored');
         }
         continue;
@@ -505,6 +529,41 @@ const SNP = (function(){
       if (refVals.some(v=>v!==refVals[0]))
         warnings.push('[Reference] lists per-port impedances ('+refVals.join(', ')+' Ω) — using '
           +refVals[0]+' Ω for all ports; renormalization is NOT performed');
+    }
+
+    // The data are referenced to the impedances the file STATES. HFSS and scikit-rf write them
+    // as "! Port Impedance" comment lines; when those differ from the one real R this viewer
+    // reads, the export was NOT renormalized (per-port / per-frequency references) and reading
+    // it at R would mislabel every S-parameter — refuse rather than guess.
+    if (portZLines.length){
+      const tol=v=>1e-6*Math.max(1, Math.abs(v));
+      const fromLines= rNoValue && !refVals.length;
+      let first=null;
+      for (const s of portZLines){
+        const nums=s.trim().split(/\s+/).filter(Boolean).map(Number);
+        if (!nums.length || nums.length%2 || nums.some(v=>!Number.isFinite(v)))
+          return { ok:false, error:'Unreadable "! Port Impedance" line ('+s.trim().slice(0,60)+') — the file states its port impedances and they cannot be read, so its reference cannot be confirmed', warnings };
+        for (let q=0;q<nums.length;q+=2){
+          const re=nums[q], im=nums[q+1];
+          if (!first) first={ re, im };
+          const want= fromLines? first : { re:z0, im:0 };
+          if (Math.abs(re-want.re)>tol(want.re) || Math.abs(im-want.im)>tol(want.re))
+            return { ok:false, error:'Not referenced to one real impedance: a "! Port Impedance" line gives '
+              +fmtNum(re,6)+(im<0?' − j':' + j')+fmtNum(Math.abs(im),6)+' Ω where '
+              +(fromLines? 'an earlier one gives '+fmtNum(want.re,6)+(want.im<0?' − j':' + j')+fmtNum(Math.abs(want.im),6)+' Ω'
+                         : 'the option line says R '+fmtNum(z0,6)+' Ω')
+              +'. The data were exported WITHOUT renormalization, so reading them at a single R would mislabel every S-parameter. Re-export renormalized to one real impedance (HFSS: renormalize all ports to 50 Ω).', warnings };
+        }
+      }
+      if (fromLines){
+        if (!(first.re>0) || Math.abs(first.im)>tol(first.re))
+          return { ok:false, error:'The "! Port Impedance" lines give a complex reference ('+fmtNum(first.re,6)+(first.im<0?' − j':' + j')
+            +fmtNum(Math.abs(first.im),6)+' Ω) — this viewer reads data referenced to one REAL impedance only', warnings };
+        z0=first.re;
+        warnings.push('Option line "R" has no value — the reference ('+fmtNum(z0,6)+' Ω) is taken from the "! Port Impedance" lines, which all agree');
+      }
+    } else if (rNoValue && !refVals.length){
+      warnings.push('Option line "R" has no value — assuming 50 Ω (the Touchstone default)');
     }
 
     if (paramType!=='s')
@@ -881,6 +940,7 @@ const SNP = (function(){
           rec.circleAbs=a;
         }
         Z=Zend; rec.zAbs={...Z}; rec.z0After=z0;
+        rec.line={ z0:zl, deg:+st.eleDeg };    // what the circuit window builds this step from
         out.push(rec); continue;
       }
       // value steps: start / series / shunt
@@ -894,6 +954,7 @@ const SNP = (function(){
         Zval= st.norm? { re:v.re*z0, im:v.im*z0 } : { re:v.re, im:v.im };
         Yadd=cxInv(Zval);
       }
+      rec.elem={ Z:Zval? {...Zval} : null, Y:Yadd? {...Yadd} : null };   // ABSOLUTE ohms / siemens
       if (st.kind==='start'){
         if (!finiteZ(Zval)){ fail('the start point resolves to an open — pick a finite impedance'); continue; }
         Z={...Zval}; rec.zAbs={...Z}; rec.z0After=z0;
@@ -954,6 +1015,8 @@ const SNP = (function(){
           hide:!!c.hide, open:c.open!==false,
           cursor:(Number.isInteger(c.cursor)&&c.cursor>=0)? c.cursor:null,
           steps:sanSteps(c.steps),
+          // the circuit window's settings; absent until the window is first opened
+          ...((c.circ && typeof c.circ==='object')? { circ:sanCirc(c.circ) } : {}),
         });
       }
     } else if (Array.isArray(sm.steps)){          // legacy single-chain projects/autosaves
@@ -982,6 +1045,636 @@ const SNP = (function(){
       chains,
     };
   }
+
+
+  // ---------- a design list as a CIRCUIT: schematic + S-parameters vs frequency ----------
+  // The list starts at the LOAD and walks toward the generator, so port 1 sees the steps
+  // in REVERSE order. Element values are the absolute ones smithSolve applied
+  // (rec.elem / rec.line) — exactly what the chart drew — defined at the design
+  // frequency f0: a reactance becomes the L or C that has it at f0, a line keeps its
+  // Z0 and scales its electrical length with f (TEM, lossless). The quantity the user
+  // TYPED fixes the topology of a lossy element: Z = R + jX is R in SERIES with the
+  // L/C, Y = G + jB is R = 1/G in PARALLEL with the C/L. A pure reactance or a pure
+  // resistance reads the same either way.
+  const CIRC_LOAD_TOPOS=['sRC','pRC','sRL','pRL','R'];
+  const CIRC_UNITS={ GHz:1e9, MHz:1e6, kHz:1e3, Hz:1 };
+  const CIRC_MAX_POINTS=20001;
+  const cxMul=(a,b)=>({ re:a.re*b.re-a.im*b.im, im:a.re*b.im+a.im*b.re });
+  // exact complex division: only a true zero (or a non-finite) denominator refuses —
+  // cxDiv's absolute 1e-30 floor is right for Gamma, not for a femtosiemens admittance
+  function cxDivX(a,b){
+    const d=b.re*b.re+b.im*b.im;
+    if (!(d>0) || !isFinite(d)) return null;
+    return { re:(a.re*b.re+a.im*b.im)/d, im:(a.im*b.re-a.re*b.im)/d };
+  }
+  const cxInvX=a=>cxDivX({ re:1, im:0 }, a);
+
+  function sanCirc(c){
+    c=(c&&typeof c==='object')?c:{};
+    const pos=v=> (typeof v==='number' && isFinite(v) && v>0)? v : null;
+    const sh=(c.show&&typeof c.show==='object')? c.show : {};
+    return {
+      f0: pos(c.f0)||1e9,
+      unit: (c.unit in CIRC_UNITS)? c.unit : 'GHz',
+      z1: pos(c.z1),                                   // null = the chart Z0 at the end of the list
+      loadTopo: CIRC_LOAD_TOPOS.includes(c.loadTopo)? c.loadTopo : null,   // null = by the sign of X
+      loadAuto: c.loadAuto!==false,                    // true = values fitted to the start point at f0
+      loadR: (typeof c.loadR==='number' && isFinite(c.loadR) && c.loadR>=0)? c.loadR : null,
+      loadC: pos(c.loadC), loadL: pos(c.loadL),
+      fStart: pos(c.fStart), fStop: pos(c.fStop),      // null = f0/2 .. 3 f0/2
+      n: (Number.isInteger(c.n) && c.n>=2 && c.n<=CIRC_MAX_POINTS)? c.n : 401,
+      log: !!c.log,
+      ref2: c.ref2==='z0'? 'z0' : 'load',
+      show: { s11:sh.s11!==false, s21:sh.s21!==false, s22:sh.s22!==false },
+      fmt: ['db','deg','smith'].includes(c.fmt)? c.fmt : 'db',
+    };
+  }
+
+  function circPartsOf(form, v, w0){
+    const p={ R:null, L:null, C:null };
+    if (form==='z'){
+      if (v.re!==0) p.R=v.re;
+      if (v.im>0) p.L=v.im/w0; else if (v.im<0) p.C=-1/(w0*v.im);
+    } else {
+      if (v.re!==0) p.R=1/v.re;
+      if (v.im>0) p.C=v.im/w0; else if (v.im<0) p.L=-1/(w0*v.im);
+    }
+    return p;
+  }
+  function circSeriesZ(p, w){            // R + jwL + 1/(jwC), whichever are present
+    let im=0;
+    if (p.L!=null) im+=w*p.L;
+    if (p.C!=null) im-=1/(w*p.C);
+    return { re:p.R!=null? p.R : 0, im };
+  }
+  function circParallelY(p, w){          // 1/R + jwC + 1/(jwL), whichever are present
+    let im=0;
+    if (p.C!=null) im+=w*p.C;
+    if (p.L!=null) im-=1/(w*p.L);
+    return { re:p.R!=null? 1/p.R : 0, im };
+  }
+  // the element's own impedance (series) / admittance (shunt) at angular frequency w
+  function circElemZ(e, w){ return e.form==='z'? circSeriesZ(e,w) : cxInvX(circParallelY(e,w)); }
+  function circElemY(e, w){ return e.form==='y'? circParallelY(e,w) : cxInvX(circSeriesZ(e,w)); }
+
+  function circuitFromChain(steps, z0Default, f0Hz){
+    steps=Array.isArray(steps)? steps : [];
+    if (!(f0Hz>0 && isFinite(f0Hz))) return { ok:false, error:'the design frequency f₀ must be a positive number' };
+    const solve=smithSolve(steps, z0Default);
+    let s0=-1;
+    for (let i=0;i<steps.length;i++) if (steps[i].kind==='start') s0=i;
+    if (s0<0) return { ok:false, error:'this list has no start point — the start point is the load' };
+    for (let i=s0;i<steps.length;i++)
+      if (!solve[i].ok) return { ok:false, error:'step '+(i+1)+' ('+steps[i].kind+'): '+(solve[i].err||'error') };
+    const w0=2*Math.PI*f0Hz;
+    const notes=[];
+    if (s0>0) notes.push('steps 1–'+s0+' come before the last start point (step '+(s0+1)+') and are not part of this circuit');
+    const fromLoad=[];
+    for (let i=s0+1;i<steps.length;i++){
+      const st=steps[i], rec=solve[i];
+      if (st.kind==='renorm' || st.kind==='start') continue;
+      if (st.kind==='line'){
+        fromLoad.push({ step:i, type:'line', z0:rec.line.z0, deg:rec.line.deg });
+        if (rec.line.deg<0) notes.push('step '+(i+1)+': a negative electrical length is not a physical line — it is still modelled as θ(f) = θ₀·f/f₀');
+        continue;
+      }
+      const form= st.q==='y'? 'y' : 'z';
+      const v= form==='y'? rec.elem.Y : rec.elem.Z;
+      const p=circPartsOf(form, v, w0);
+      if (p.R==null && p.L==null && p.C==null){
+        notes.push('step '+(i+1)+' is '+(st.kind==='series'? 'a 0 Ω series element (a wire)' : 'a 0 S shunt element (an open)')+' — no component');
+        continue;
+      }
+      if (p.R!=null && p.R<0) notes.push('step '+(i+1)+': negative resistance — this network is active');
+      fromLoad.push({ step:i, type:st.kind, form, at0:{ re:v.re, im:v.im }, R:p.R, L:p.L, C:p.C });
+    }
+    const last=solve[steps.length-1];
+    return { ok:true, f0Hz, start:s0, zLoad0:{ ...solve[s0].zAbs }, zIn0:{ ...last.zAbs }, z1:last.z0After,
+      elements:fromLoad.slice().reverse(), notes };
+  }
+
+  // the RC / RL load that IS the start point at f0
+  function circLoadFromZ(Z, f0Hz, topo){
+    const w0=2*Math.PI*f0Hz;
+    const ld={ topo, R:null, C:null, L:null };
+    const zs=fmtNum(Z.re,5)+(Z.im<0?' − j':' + j')+fmtNum(Math.abs(Z.im),5)+' Ω';
+    if (!(Z.re>=0)) return { ...ld, err:'the start point has a negative real part ('+zs+') — no passive RC/RL load reproduces it' };
+    if (topo==='sRC' || topo==='sRL' || topo==='R'){
+      ld.R=Z.re;
+      if (topo==='R'){
+        if (Z.im!==0) return { ...ld, err:'the start point is '+zs+' at f₀ — a resistor alone cannot reproduce its reactance' };
+        if (!(Z.re>0)) return { ...ld, err:'the start point is a short (0 Ω)' };
+        return ld;
+      }
+      if (topo==='sRC'){ if (Z.im<0){ ld.C=-1/(w0*Z.im); return ld; } }
+      else if (Z.im>0){ ld.L=Z.im/w0; return ld; }
+      return { ...ld, err:'the start point is '+(Z.im===0?'purely resistive':Z.im>0?'inductive':'capacitive')+' at f₀ ('+zs+') — a '+(topo==='sRC'?'series RC':'series RL')+' cannot reproduce it' };
+    }
+    const Y=cxInvX(Z);
+    if (!Y) return { ...ld, err:'the start point is a short (0 Ω) — a parallel load cannot be one' };
+    if (!(Y.re>0)) return { ...ld, err:'the start point has no resistance ('+zs+') — a parallel load needs G > 0; use a series topology' };
+    ld.R=1/Y.re;
+    if (topo==='pRC'){ if (Y.im>0){ ld.C=Y.im/w0; return ld; } }
+    else if (Y.im<0){ ld.L=-1/(w0*Y.im); return ld; }
+    return { ...ld, err:'the start point is '+(Z.im===0?'purely resistive':Z.im>0?'inductive':'capacitive')+' at f₀ ('+zs+') — a '+(topo==='pRC'?'parallel RC':'parallel RL')+' cannot reproduce it' };
+  }
+  function circLoadCheck(ld){
+    if (!ld || !CIRC_LOAD_TOPOS.includes(ld.topo)) return 'pick a load topology';
+    const par= ld.topo==='pRC' || ld.topo==='pRL';
+    if (!(isFinite(ld.R) && (par? ld.R>0 : ld.R>=0))) return par? 'a parallel load needs R > 0 Ω' : 'the load needs R ≥ 0 Ω';
+    if ((ld.topo==='sRC'||ld.topo==='pRC') && !(ld.C>0 && isFinite(ld.C))) return 'the load needs C > 0';
+    if ((ld.topo==='sRL'||ld.topo==='pRL') && !(ld.L>0 && isFinite(ld.L))) return 'the load needs L > 0';
+    if (ld.topo==='R' && !(ld.R>0)) return 'a resistor load needs R > 0 Ω';
+    return null;
+  }
+  function circLoadZ(ld, f){
+    const w=2*Math.PI*f;
+    switch(ld.topo){
+      case 'sRC': return { re:ld.R, im:-1/(w*ld.C) };
+      case 'sRL': return { re:ld.R, im:w*ld.L };
+      case 'pRC': return cxInvX({ re:1/ld.R, im:w*ld.C });
+      case 'pRL': return cxInvX({ re:1/ld.R, im:-1/(w*ld.L) });
+      default:    return { re:ld.R, im:0 };
+    }
+  }
+
+  // cascade, port 1 -> load: M = E1 · E2 · … (ABCD); null when an element is open/short-singular at f
+  function circAbcd(elements, f, f0Hz){
+    const w=2*Math.PI*f;
+    let A={re:1,im:0}, B={re:0,im:0}, C={re:0,im:0}, D={re:1,im:0};
+    for (const e of elements){
+      let a, b, c, d;
+      if (e.type==='line'){
+        const th=e.deg*Math.PI/180*(f/f0Hz), cs=Math.cos(th), sn=Math.sin(th);
+        a={re:cs,im:0}; b={re:0,im:e.z0*sn}; c={re:0,im:sn/e.z0}; d={re:cs,im:0};
+      } else if (e.type==='series'){
+        const Z=circElemZ(e,w);
+        if (!Z || !isFinite(Z.re) || !isFinite(Z.im)) return null;
+        a={re:1,im:0}; b=Z; c={re:0,im:0}; d={re:1,im:0};
+      } else {
+        const Y=circElemY(e,w);
+        if (!Y || !isFinite(Y.re) || !isFinite(Y.im)) return null;
+        a={re:1,im:0}; b={re:0,im:0}; c=Y; d={re:1,im:0};
+      }
+      const nA=cxAdd(cxMul(A,a),cxMul(B,c)), nB=cxAdd(cxMul(A,b),cxMul(B,d));
+      const nC=cxAdd(cxMul(C,a),cxMul(D,c)), nD=cxAdd(cxMul(C,b),cxMul(D,d));
+      A=nA; B=nB; C=nC; D=nD;
+    }
+    return { A, B, C, D };
+  }
+
+  // POWER-WAVE S-parameters (Kurokawa; scikit-rf s_def='power') of the cascade with port 1
+  // referenced to the real z1 and port 2 to Z2 = the load Z_L(f) (ref2 'load') or z1 (ref2 'z0'):
+  //   den = A Z2 + B + C Z1 Z2 + D Z1
+  //   S11 = (A Z2 + B − C Z1* Z2 − D Z1*)/den     S21 = 2 √(R1 R2)/den
+  //   S12 = 2 √(R1 R2)(AD − BC)/den               S22 = (−A Z2* + B − C Z1 Z2* + D Z1)/den
+  // With a2 = 0 port 2 is terminated in Z2 itself, so S11 is the input reflection with the
+  // load attached; |S21|² is the power delivered to the load over the power available from
+  // port 1; S22 = (Zout − Z_L*)/(Zout + Z_L) is the conjugate-match error seen from the load.
+  // A load with Re Z_L ≤ 0 absorbs no power: S21/S12/S22 are left undefined (NaN), S11 is not.
+  function circuitSparams(circ, ld, z1, freqHz, ref2){
+    const n=freqHz.length;
+    const mk=()=>({ re:new Float64Array(n), im:new Float64Array(n) });
+    const S={ '1,1':mk(), '2,1':mk(), '1,2':mk(), '2,2':mk() };
+    const zin=mk(), zref2=mk();
+    let noPower=0, singular=0;
+    const Z1={ re:z1, im:0 }, R1=z1;
+    for (let k=0;k<n;k++){
+      const f=freqHz[k];
+      const ZL=circLoadZ(ld, f);
+      const Z2= ref2==='z0'? Z1 : ZL;
+      zref2.re[k]= Z2? Z2.re : NaN; zref2.im[k]= Z2? Z2.im : NaN;
+      const M=circAbcd(circ.elements, f, circ.f0Hz);
+      const put=(key, v)=>{ S[key].re[k]= v? v.re : NaN; S[key].im[k]= v? v.im : NaN; };
+      if (!M || !Z2){ singular++; for (const key in S) put(key, null); zin.re[k]=zin.im[k]=NaN; continue; }
+      const { A, B, C, D }=M;
+      if (ZL){
+        const zi=cxDivX(cxAdd(cxMul(A,ZL),B), cxAdd(cxMul(C,ZL),D));
+        zin.re[k]= zi? zi.re : NaN; zin.im[k]= zi? zi.im : NaN;
+      } else { zin.re[k]=zin.im[k]=NaN; }
+      const AZ2=cxMul(A,Z2), CZ1Z2=cxMul(cxMul(C,Z1),Z2), DZ1=cxMul(D,Z1);
+      const den=cxAdd(cxAdd(AZ2,B), cxAdd(CZ1Z2,DZ1));
+      const Z2c={ re:Z2.re, im:-Z2.im };
+      const s11=cxDivX(cxSub(cxAdd(AZ2,B), cxAdd(CZ1Z2,DZ1)), den);    // Z1 real: Z1* = Z1
+      put('1,1', s11);
+      const R2=Z2.re;
+      if (!(R2>0) || !s11){
+        if (s11) noPower++; else singular++;
+        put('2,1', null); put('1,2', null); put('2,2', null);
+        continue;
+      }
+      const g=2*Math.sqrt(R1*R2);
+      put('2,1', cxDivX({ re:g, im:0 }, den));
+      put('1,2', cxDivX(cxMul({ re:g, im:0 }, cxSub(cxMul(A,D), cxMul(B,C))), den));
+      const s22n=cxAdd(cxSub(B, cxMul(A,Z2c)), cxSub(DZ1, cxMul(cxMul(C,Z1),Z2c)));
+      put('2,2', cxDivX(s22n, den));
+    }
+    return { S, zin, zref2, noPower, singular };
+  }
+
+  function sweepFreqs(startHz, stopHz, n, log){
+    if (!(startHz>0 && isFinite(startHz) && stopHz>0 && isFinite(stopHz)))
+      return { ok:false, error:'start and stop must be positive frequencies' };
+    if (!(stopHz>startHz)) return { ok:false, error:'stop must be above start' };
+    if (!(Number.isInteger(n) && n>=2 && n<=CIRC_MAX_POINTS)) return { ok:false, error:'points must be an integer 2–'+CIRC_MAX_POINTS };
+    const f=new Float64Array(n);
+    for (let k=0;k<n;k++)
+      f[k]= log? startHz*Math.pow(stopHz/startHz, k/(n-1)) : startHz+(stopHz-startHz)*k/(n-1);
+    f[0]=startHz; f[n-1]=stopHz;
+    for (let k=1;k<n;k++) if (!(f[k]>f[k-1]))
+      return { ok:false, error:'the sweep collapses to repeated frequencies — widen it or use fewer points' };
+    return { ok:true, freqHz:f };
+  }
+
+  // everything the circuit window shows, from the list + its saved settings (sanCirc)
+  function circuitSolve(steps, chartZ0, cfg){
+    cfg=sanCirc(cfg);
+    const out={ ok:false, cfg, notes:[] };
+    const circ=circuitFromChain(steps, chartZ0, cfg.f0);
+    if (!circ.ok){ out.error=circ.error; return out; }
+    out.circuit=circ; out.notes.push(...circ.notes);
+    out.z1= cfg.z1!=null? cfg.z1 : circ.z1;
+    const Zs=circ.zLoad0;
+    const autoTopo= Zs.im<0? 'sRC' : Zs.im>0? 'sRL' : 'R';
+    const topo= cfg.loadTopo || autoTopo;
+    let ld;
+    if (cfg.loadAuto){
+      ld=circLoadFromZ(Zs, cfg.f0, topo);
+      out.loadErr=ld.err||null;
+    } else {
+      ld={ topo, R:cfg.loadR, C:(topo==='sRC'||topo==='pRC')? cfg.loadC : null, L:(topo==='sRL'||topo==='pRL')? cfg.loadL : null };
+      out.loadErr=null;
+    }
+    out.load={ topo:ld.topo, R:ld.R, C:ld.C, L:ld.L };
+    if (!out.loadErr) out.loadErr=circLoadCheck(out.load);
+    out.loadAuto=cfg.loadAuto;
+    if (out.loadErr){ out.error='load: '+out.loadErr; return out; }
+    const zl0=circLoadZ(out.load, cfg.f0);
+    const dz= zl0? Math.hypot(zl0.re-Zs.re, zl0.im-Zs.im) : Infinity;
+    out.loadAtF0=zl0;
+    out.loadMatchesStart= dz<=1e-9*Math.max(1, Math.hypot(Zs.re, Zs.im));
+    const fa= cfg.fStart!=null? cfg.fStart : cfg.f0/2, fb= cfg.fStop!=null? cfg.fStop : 1.5*cfg.f0;
+    const sw=sweepFreqs(fa, fb, cfg.n, cfg.log);
+    out.sweep={ startHz:fa, stopHz:fb, n:cfg.n, log:cfg.log };
+    if (!sw.ok){ out.error='sweep: '+sw.error; return out; }
+    out.freqHz=sw.freqHz;
+    out.res=circuitSparams(circ, out.load, out.z1, sw.freqHz, cfg.ref2);
+    out.at0=circuitSparams(circ, out.load, out.z1, new Float64Array([cfg.f0]), cfg.ref2);
+    const zi=out.at0.zin;
+    // the circuit at f0 with the start-point load IS the chart's last point — a hard check
+    if (out.loadMatchesStart){
+      const d=Math.hypot(zi.re[0]-circ.zIn0.re, zi.im[0]-circ.zIn0.im);
+      out.f0Check={ ok: d<=1e-9*Math.max(1, Math.hypot(circ.zIn0.re, circ.zIn0.im)), dz:d };
+    }
+    if (out.res.noPower)
+      out.notes.push('S21, S12 and S22 are undefined at '+out.res.noPower+' of '+cfg.n+' points: the load absorbs no power there (Re Z_L ≤ 0), so its power waves do not exist — S11 still is');
+    if (out.res.singular)
+      out.notes.push(out.res.singular+' point(s) hit an open or short the cascade cannot pass — left blank');
+    out.ok=true;
+    return out;
+  }
+
+  // ---------- engineering-unit labels ----------
+  function fmtSI(v, unit, sig){
+    if (v==null || !isFinite(v)) return '—';
+    if (v===0) return '0 '+unit;
+    const PRE=[[1e12,'T'],[1e9,'G'],[1e6,'M'],[1e3,'k'],[1,''],[1e-3,'m'],[1e-6,'µ'],[1e-9,'n'],[1e-12,'p'],[1e-15,'f'],[1e-18,'a']];
+    const a=Math.abs(v), sg=sig||4;
+    for (const [m,p] of PRE)
+      if (a>=m*(1-5*Math.pow(10,-sg))) return String(parseFloat((v/m).toPrecision(sg)))+' '+p+unit;
+    return v.toExponential(sg-1)+' '+unit;
+  }
+  const xmlEsc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  // ---------- the schematic, as a standalone SVG string ----------
+  // model: { name, f0Hz, z1, elements (port 1 -> load), load, loadStep, ref2 }
+  function circuitSchematicSvg(model, opt){
+    opt=opt||{};
+    const pal=opt.pal||{ bg:'#ffffff', line:'#1f2937', ink:'#111827', ink2:'#6b7280', fill:'#e0e7ff', ref:'#7c3aed' };
+    const font=opt.font||'"IBM Plex Mono", Menlo, Consolas, monospace';
+    const RAIL=86, GND=206, MID=(RAIL+GND)/2;
+    const els=[], txt=[];
+    const L=(x1,y1,x2,y2,extra)=>els.push('<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+pal.line+'" stroke-width="1.6"'+(extra||'')+'/>');
+    // inline STYLE, not presentation attributes: a host page's `svg text{ fill:… }` rule beats an
+    // attribute but never an inline style, so the schematic reads the same embedded or standalone
+    const T=(x,y,s,o)=>{ o=o||{};
+      txt.push('<text x="'+x+'" y="'+y+'"'+(o.anchor?' text-anchor="'+o.anchor+'"':'')
+        +' style="font-size:'+(o.size||11)+'px;fill:'+(o.col||pal.ink)+(o.weight?';font-weight:'+o.weight:'')+'">'+xmlEsc(s)+'</text>'); };
+    // a two-terminal symbol between (x1,y) and (x2,y), drawn horizontally; vertical ones are rotated
+    const sym=(kind, x1, x2, y, vertical)=>{
+      const c=(x1+x2)/2, h=(x2-x1)/2;
+      let d='';
+      if (kind==='R'){
+        d='M'+(-h)+' 0 L-16 0';
+        for (let i=0;i<6;i++) d+=' L'+(-16+i*16/3+8/3)+' '+(i%2?6:-6);
+        d+=' L16 0 L'+h+' 0';
+      } else if (kind==='L'){
+        d='M'+(-h)+' 0 L-16 0';
+        for (let i=0;i<4;i++) d+=' a4 4 0 0 1 8 0';
+        d+=' L'+h+' 0';
+      } else {   // C
+        d='M'+(-h)+' 0 L-4 0 M-4 -11 L-4 11 M4 -11 L4 11 M4 0 L'+h+' 0';
+      }
+      const tr= vertical? 'translate('+y+' '+c+') rotate(90)' : 'translate('+c+' '+y+')';
+      els.push('<path d="'+d+'" transform="'+tr+'" fill="none" stroke="'+pal.line+'" stroke-width="1.6" stroke-linejoin="round"/>');
+    };
+    const partList=e=>{
+      const a=[];
+      if (e.R!=null) a.push(['R', 'R '+fmtSI(e.R,'Ω')]);
+      if (e.L!=null) a.push(['L', 'L '+fmtSI(e.L,'H')]);
+      if (e.C!=null) a.push(['C', 'C '+fmtSI(e.C,'F')]);
+      return a;
+    };
+    const atLabel=e=> (e.form==='z'? 'Z' : 'Y')+' = '+fmtNum(e.at0.re,5)+(e.at0.im<0?' − j':' + j')+fmtNum(Math.abs(e.at0.im),5)+(e.form==='z'?' Ω':' S')+' at f₀';
+    const groups=[];   // [x0, x1, title] per element, for hover <title>s
+    let x=0;
+    // port 1
+    const px=48;
+    els.push('<circle cx="'+px+'" cy="'+MID+'" r="15" fill="none" stroke="'+pal.line+'" stroke-width="1.6"/>');
+    T(px, MID+4, '1', { anchor:'middle', weight:'700' });
+    L(px, RAIL, px, MID-15); L(px, MID+15, px, GND);
+    T(px, RAIL-30, 'port 1', { anchor:'middle', weight:'700' });
+    T(px, RAIL-16, 'Z₀ = '+fmtNum(model.z1,5)+' Ω', { anchor:'middle', col:pal.ink2, size:10.5 });
+    // ground glyph under the port
+    L(px, GND, px, GND+10);
+    L(px-11, GND+10, px+11, GND+10); L(px-7, GND+14, px+7, GND+14); L(px-3, GND+18, px+3, GND+18);
+    x=px;
+    const rail=(x1,x2)=>L(x1, RAIL, x2, RAIL);
+    for (const e of model.elements){
+      const tag='#'+(e.step+1);
+      if (e.type==='line'){
+        const w=128, a=x+24, b=a+w-48;
+        rail(x, a);
+        els.push('<rect x="'+a+'" y="'+(RAIL-9)+'" width="'+(b-a)+'" height="18" rx="9" fill="'+pal.fill+'" stroke="'+pal.line+'" stroke-width="1.6"/>');
+        els.push('<ellipse cx="'+(b-9)+'" cy="'+RAIL+'" rx="4" ry="9" fill="none" stroke="'+pal.line+'" stroke-width="1.2"/>');
+        rail(b, x+w);
+        T((a+b)/2, RAIL-30, 'Z₀ '+fmtSI(e.z0,'Ω'), { anchor:'middle' });
+        T((a+b)/2, RAIL-16, 'θ '+fmtNum(e.deg,5)+'° at f₀', { anchor:'middle' });
+        T((a+b)/2, RAIL+26, tag+' line', { anchor:'middle', col:pal.ink2, size:10 });
+        groups.push([x, x+w, 'step '+(e.step+1)+': transmission line, Z₀ = '+fmtNum(e.z0,6)+' Ω, θ = '+fmtNum(e.deg,6)+'° at f₀ (TEM, lossless, θ ∝ f)']);
+        x+=w; continue;
+      }
+      const parts=partList(e);
+      if (e.type==='series'){
+        if (e.form==='y' && parts.length===2){       // parallel pair, in series
+          const w=124, a=x+22, b=x+w-22;
+          rail(x, a); rail(b, x+w);
+          L(a, RAIL-20, a, RAIL+20); L(b, RAIL-20, b, RAIL+20);
+          sym(parts[0][0], a, b, RAIL-20); sym(parts[1][0], a, b, RAIL+20);
+          T((a+b)/2, RAIL-36, parts[0][1], { anchor:'middle' });
+          T((a+b)/2, RAIL+46, parts[1][1], { anchor:'middle' });
+          T((a+b)/2, RAIL+60, tag+' series', { anchor:'middle', col:pal.ink2, size:10 });
+          groups.push([x, x+w, 'step '+(e.step+1)+': series element, '+atLabel(e)+' (typed as Y: R ∥ '+parts[1][0]+')']);
+          x+=w; continue;
+        }
+        const w=parts.length*84+16;
+        let cx=x;
+        rail(cx, cx+8); cx+=8;
+        parts.forEach(([k, lab])=>{
+          sym(k, cx, cx+84, RAIL);
+          T(cx+42, RAIL-24, lab, { anchor:'middle' });
+          cx+=84;
+        });
+        rail(cx, x+w);
+        T(x+w/2, RAIL+28, tag+' series', { anchor:'middle', col:pal.ink2, size:10 });
+        groups.push([x, x+w, 'step '+(e.step+1)+': series element, '+atLabel(e)]);
+        x+=w; continue;
+      }
+      // shunt
+      if (e.form==='y' && parts.length===2){          // two parallel branches to ground
+        const w=150, b1=x+30, b2=x+70;
+        rail(x, x+w);
+        els.push('<circle cx="'+b1+'" cy="'+RAIL+'" r="2.6" fill="'+pal.line+'"/>');
+        els.push('<circle cx="'+b2+'" cy="'+RAIL+'" r="2.6" fill="'+pal.line+'"/>');
+        L(b1, RAIL, b1, MID-34); sym(parts[0][0], MID-34, MID+34, b1, true); L(b1, MID+34, b1, GND);
+        L(b2, RAIL, b2, MID-34); sym(parts[1][0], MID-34, MID+34, b2, true); L(b2, MID+34, b2, GND);
+        T(b2+14, MID-6, parts[0][1]); T(b2+14, MID+10, parts[1][1]);
+        T(b2+14, MID+26, tag+' shunt', { col:pal.ink2, size:10 });
+        groups.push([x, x+w, 'step '+(e.step+1)+': shunt element, '+atLabel(e)+' (typed as Y: R ∥ '+parts[1][0]+')']);
+        x+=w; continue;
+      }
+      const w=140, b1=x+28;
+      rail(x, x+w);
+      els.push('<circle cx="'+b1+'" cy="'+RAIL+'" r="2.6" fill="'+pal.line+'"/>');
+      if (parts.length===1){
+        L(b1, RAIL, b1, MID-34); sym(parts[0][0], MID-34, MID+34, b1, true); L(b1, MID+34, b1, GND);
+        T(b1+14, MID+4, parts[0][1]);
+        T(b1+14, MID+20, tag+' shunt', { col:pal.ink2, size:10 });
+      } else {                                        // series pair, to ground
+        L(b1, RAIL, b1, RAIL+8);
+        sym(parts[0][0], RAIL+8, MID, b1, true); sym(parts[1][0], MID, GND-8, b1, true);
+        L(b1, GND-8, b1, GND);
+        T(b1+14, (RAIL+8+MID)/2+4, parts[0][1]); T(b1+14, (MID+GND-8)/2+4, parts[1][1]);
+        T(b1+14, GND-2, tag+' shunt', { col:pal.ink2, size:10 });
+      }
+      groups.push([x, x+w, 'step '+(e.step+1)+': shunt element, '+atLabel(e)]);
+      x+=w;
+    }
+    // port-2 reference plane, then the load
+    const refX=x+18;
+    rail(x, refX+40);
+    els.push('<line x1="'+refX+'" y1="'+(RAIL-40)+'" x2="'+refX+'" y2="'+(GND+12)+'" stroke="'+pal.ref+'" stroke-width="1.4" stroke-dasharray="5 4"/>');
+    T(refX, RAIL-46, 'port 2', { anchor:'middle', weight:'700', col:pal.ref });
+    T(refX, GND+26, model.ref2==='z0'? 'ref Z₀ = '+fmtNum(model.z1,5)+' Ω' : 'ref = Z_L(f)', { anchor:'middle', col:pal.ref, size:10 });
+    const ld=model.load;
+    const lx=refX+40, dim= model.ref2==='z0';
+    const lg0=els.length, tg0=txt.length;
+    if (ld){
+      const lp=[];
+      // a 0 Ω resistor in a SERIES load is a wire — draw the C / L alone
+      if (ld.R!=null && !(ld.R===0 && (ld.topo==='sRC' || ld.topo==='sRL'))) lp.push(['R', 'R '+fmtSI(ld.R,'Ω')]);
+      if (ld.C!=null) lp.push(['C', 'C '+fmtSI(ld.C,'F')]);
+      if (ld.L!=null) lp.push(['L', 'L '+fmtSI(ld.L,'H')]);
+      const par= ld.topo==='pRC' || ld.topo==='pRL';
+      if (par && lp.length===2){
+        const b2=lx+40;
+        rail(lx, b2);
+        L(lx, RAIL, lx, MID-34); sym(lp[0][0], MID-34, MID+34, lx, true); L(lx, MID+34, lx, GND);
+        L(b2, RAIL, b2, MID-34); sym(lp[1][0], MID-34, MID+34, b2, true); L(b2, MID+34, b2, GND);
+        T(b2+14, MID-6, lp[0][1]); T(b2+14, MID+10, lp[1][1]);
+        x=b2;
+      } else if (lp.length===2){
+        L(lx, RAIL, lx, RAIL+8);
+        sym(lp[0][0], RAIL+8, MID, lx, true); sym(lp[1][0], MID, GND-8, lx, true);
+        L(lx, GND-8, lx, GND);
+        T(lx+14, (RAIL+8+MID)/2+4, lp[0][1]); T(lx+14, (MID+GND-8)/2+4, lp[1][1]);
+        x=lx;
+      } else {
+        L(lx, RAIL, lx, MID-34); sym(lp[0][0], MID-34, MID+34, lx, true); L(lx, MID+34, lx, GND);
+        T(lx+14, MID+4, lp[0][1]);
+        x=lx;
+      }
+      T(x+14, RAIL-14, 'load'+(model.loadStep!=null? ' (#'+(model.loadStep+1)+' start)' : ''), { weight:'700' });
+      T(x+14, RAIL, ({ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'parallel RL', R:'resistor' })[ld.topo]
+        +(dim? ' — not in S' : ''), { col:pal.ink2, size:10 });
+    } else {
+      T(lx+14, MID, 'load: —', { col:pal.ink2 });
+      x=lx;
+    }
+    if (dim){                                         // port 2 at Z0: the load is drawn but not part of S
+      els.splice(lg0, 0, '<g opacity="0.42">'); els.push('</g>');
+      txt.splice(tg0, 0, '<g opacity="0.55">'); txt.push('</g>');
+    }
+    // ground return
+    const xEnd=x+150;
+    L(px, GND, Math.max(px, x), GND);
+    const W=Math.ceil(xEnd+10), H=GND+60;
+    T(10, 16, (model.name||'design list')+' — circuit at f₀ = '+fmtSI(model.f0Hz,'Hz',6), { weight:'700', size:12 });
+    T(10, H-10, 'values defined at f₀ · L/C from the reactance at f₀ · lines TEM, lossless, θ ∝ f · drawn port 1 → load', { col:pal.ink2, size:9.5 });
+    const hov=groups.map(g=>'<rect x="'+g[0]+'" y="'+(RAIL-60)+'" width="'+(g[1]-g[0])+'" height="'+(GND-RAIL+70)+'" fill="transparent"><title>'+xmlEsc(g[2])+'</title></rect>').join('');
+    const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+xmlEsc(font)+'">'
+      +'<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="'+pal.bg+'"/>'
+      +els.join('')+txt.join('')+hov+'</svg>';
+    return { svg, width:W, height:H };
+  }
+
+  // ---------- the same circuit as a scikit-rf script ----------
+  function circuitSkrfScript(model){
+    const py=v=>{ if (!isFinite(v)) throw new Error('non-finite value in the circuit: '+v); return String(v); };
+    const pyStr=s=>'"'+String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/[\r\n]+/g,' ')+'"';
+    const fname=String(model.name||'design').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/^_+|_+$/g,'')||'design';
+    const sw=model.sweep;
+    const lines=[];
+    lines.push('#!/usr/bin/env python3');
+    lines.push('# scikit-rf reconstruction of the S-Param Studio design list '+pyStr(model.name||'design')+'.');
+    lines.push('# Values were set on the Smith chart at the design frequency f0: every reactance is the');
+    lines.push('# L or C that has it at f0, every line is TEM and lossless (electrical length ∝ f).');
+    lines.push('# The list starts at the load and walks toward the generator; the cascade below is');
+    lines.push('# written port 1 -> load. Generated '+new Date().toISOString().slice(0,10)+' — needs scikit-rf >= 1.0, numpy, matplotlib.');
+    lines.push('import numpy as np');
+    lines.push('import matplotlib.pyplot as plt');
+    lines.push('import skrf as rf');
+    lines.push('from skrf.media import DefinedGammaZ0');
+    lines.push('');
+    lines.push('c0 = 299792458.0                 # m/s');
+    lines.push('f0 = '+py(model.f0Hz)+'   # Hz — the design frequency');
+    lines.push('Z0 = '+py(model.z1)+'   # Ω  — port-1 reference impedance');
+    lines.push('f_hz = np.'+(sw.log?'geomspace':'linspace')+'('+py(sw.startHz)+', '+py(sw.stopHz)+', '+sw.n+')');
+    lines.push('freq = rf.Frequency.from_f(f_hz, unit="Hz")');
+    lines.push('freq.unit = '+pyStr(model.unit||'GHz'));
+    lines.push('w = 2*np.pi*freq.f');
+    lines.push('med = DefinedGammaZ0(frequency=freq, z0_port=Z0, z0=Z0, gamma=1j*w/c0)   # TEM, lossless');
+    lines.push('');
+    lines.push('def tline(Zc, theta0_deg):');
+    lines.push('    """Lossless TEM line of characteristic impedance Zc, electrical length theta0_deg at f0."""');
+    lines.push('    return med.line(np.deg2rad(theta0_deg)*c0/(2*np.pi*f0), unit="m", z0=Zc)');
+    lines.push('');
+    lines.push('def series_z(Z):');
+    lines.push('    """Series element of any impedance Z(f) (skrf\'s series element takes complex arrays)."""');
+    lines.push('    return med.resistor(Z)');
+    lines.push('');
+    lines.push('def shunt_z(Z):');
+    lines.push('    """Shunt branch to ground of any impedance Z(f)."""');
+    lines.push('    return med.shunt_resistor(Z)');
+    lines.push('');
+    const terms=[];
+    for (const e of model.elements){
+      const tag='# step '+(e.step+1)+': ';
+      if (e.type==='line'){ terms.push(['tline('+py(e.z0)+', '+py(e.deg)+')', tag+'line, Z0 '+fmtNum(e.z0,6)+' Ω, '+fmtNum(e.deg,6)+'° at f0']); continue; }
+      const at=(e.form==='z'?'Z':'Y')+' = '+fmtNum(e.at0.re,6)+(e.at0.im<0?'-j':'+j')+fmtNum(Math.abs(e.at0.im),6)+(e.form==='z'?' Ω':' S')+' at f0';
+      const n=(e.R!=null)+(e.L!=null)+(e.C!=null);
+      let ex;
+      if (e.type==='series'){
+        if (e.form==='z' || n===1){
+          const a=[];
+          if (e.R!=null) a.push('med.resistor('+py(e.R)+')');
+          if (e.L!=null) a.push('med.inductor('+py(e.L)+')');
+          if (e.C!=null) a.push('med.capacitor('+py(e.C)+')');
+          ex=a.join(' ** ');
+        } else {
+          ex='series_z(1/(1/'+py(e.R)+(e.C!=null? ' + 1j*w*'+py(e.C) : ' + 1/(1j*w*'+py(e.L)+')')+'))';
+        }
+        terms.push([ex, tag+'series '+at+(e.form==='y'&&n===2?' — R ∥ '+(e.C!=null?'C':'L'):'')]);
+      } else {
+        if (e.form==='y' || n===1){
+          const a=[];
+          if (e.R!=null) a.push('med.shunt_resistor('+py(e.R)+')');
+          if (e.C!=null) a.push('med.shunt_capacitor('+py(e.C)+')');
+          if (e.L!=null) a.push('med.shunt_inductor('+py(e.L)+')');
+          ex=a.join(' ** ');
+        } else {
+          ex='shunt_z('+py(e.R)+(e.L!=null? ' + 1j*w*'+py(e.L) : ' + 1/(1j*w*'+py(e.C)+')')+')';
+        }
+        terms.push([ex, tag+'shunt '+at+(e.form==='z'&&n===2?' — R in series with '+(e.L!=null?'L':'C'):'')]);
+      }
+    }
+    lines.push('# ---- the network, port 1 -> load ----');
+    if (!terms.length) lines.push('network = med.thru()   # no elements: the load sits right at port 1');
+    else {
+      lines.push('network = (');
+      terms.forEach(([ex, cm], i)=>lines.push('    '+(i? '** ' : '')+ex+'   '+cm));
+      lines.push(')');
+    }
+    lines.push('network.name = '+pyStr((model.name||'design')+' network'));
+    lines.push('');
+    const ld=model.load;
+    lines.push('# ---- the load'+(model.loadStep!=null? ' (the start point, step '+(model.loadStep+1)+')' : '')+': '
+      +({ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'parallel RL', R:'resistor' })[ld.topo]+' ----');
+    lines.push('R_load = '+py(ld.R));
+    if (ld.C!=null) lines.push('C_load = '+py(ld.C));
+    if (ld.L!=null) lines.push('L_load = '+py(ld.L));
+    lines.push('ZL = '+({ sRC:'R_load + 1/(1j*w*C_load)', sRL:'R_load + 1j*w*L_load',
+      pRC:'1/(1/R_load + 1j*w*C_load)', pRL:'1/(1/R_load + 1/(1j*w*L_load))', R:'R_load + 0j*w' })[ld.topo]);
+    lines.push('');
+    if (model.ref2==='z0'){
+      lines.push('# ---- port 2 at Z0: the network alone; the load is NOT part of these S-parameters ----');
+      lines.push('ntw = network.copy()');
+    } else {
+      lines.push('# ---- port 2 referenced to the load, POWER waves (Kurokawa) ----');
+      lines.push('# S11 = input reflection with the load attached; |S21|^2 = power delivered to the load');
+      lines.push('# over the power available from port 1; S22 = conjugate-match error seen from the load.');
+      lines.push('ntw = network.copy()');
+      lines.push('ntw.renormalize(np.column_stack([np.full(len(w), Z0, dtype=complex), ZL]), s_def="power")');
+    }
+    lines.push('ntw.name = '+pyStr(model.name||'design'));
+    lines.push('');
+    const show=model.show||{ s11:true, s21:true, s22:true };
+    const pairs=[];
+    if (show.s11) pairs.push('(0, 0)');
+    if (show.s21) pairs.push('(1, 0)');
+    if (show.s22) pairs.push('(1, 1)');
+    lines.push('show = ['+(pairs.length? pairs.join(', ') : '(0, 0)')+']   # (m, n), zero-based: S11, S21, S22');
+    lines.push('fig, axs = plt.subplots(1, 3, figsize=(16, 4.8))');
+    lines.push('for m, n in show:');
+    lines.push('    ntw.plot_s_db(m, n, ax=axs[0])');
+    lines.push('    ntw.plot_s_deg(m, n, ax=axs[1])');
+    lines.push('    ntw.plot_s_smith(m, n, ax=axs[2], draw_labels=True)');
+    lines.push('for ax in axs[:2]:');
+    lines.push('    ax.axvline(f0/freq.multiplier, color="0.5", ls="--", lw=1)   # f0');
+    lines.push('axs[0].set_title("|S| (dB)"); axs[1].set_title("phase (deg)"); axs[2].set_title("Smith")');
+    lines.push('fig.suptitle(ntw.name + "  —  port 2 " + ('+(model.ref2==='z0'? '"at Z0"' : '"= the load (power waves)"')+'))');
+    lines.push('fig.tight_layout()');
+    lines.push('');
+    lines.push('network.write_touchstone('+pyStr(fname+'_network')+')            # both ports at Z0');
+    if (model.ref2!=='z0')
+      lines.push('ntw.write_touchstone('+pyStr(fname+'_load_ref')+', write_z0=True)   # per-frequency port impedances');
+    lines.push('plt.show()');
+    return lines.join('\n')+'\n';
+  }
+
+  // Touchstone with PER-FREQUENCY, complex port impedances, the way scikit-rf (and HFSS) write
+  // them: an "R" with no value on the option line and a "! Port Impedance" line under every
+  // data line. scikit-rf reads it back exactly; this app's own parser REFUSES it (one real
+  // reference per file, never renormalized) — so it can never be re-imported mislabelled.
+  function serializeTouchstonePortZ(freqHz, S, portZ, comments){
+    const lines=[];
+    for (const c of (comments||[])) lines.push('! '+c);
+    lines.push('! Data is not renormalized');
+    lines.push('! S-parameter uses the power definition');
+    lines.push('# Hz S RI R');
+    const v=(key,k)=>{
+      const s=S[key], re=s.re[k], im=s.im[k];
+      if (!isFinite(re) || !isFinite(im)) throw new Error(keyLabelPlain(key)+' is undefined at '+freqHz[k]+' Hz');
+      return String(re)+' '+String(im);
+    };
+    for (let k=0;k<freqHz.length;k++){
+      lines.push([String(freqHz[k]), v('1,1',k), v('2,1',k), v('1,2',k), v('2,2',k)].join(' '));
+      const z=portZ.map(p=>String(p.re[k])+' '+String(p.im[k])).join(' ');
+      lines.push('! Port Impedance '+z);
+    }
+    return lines.join('\n')+'\n';
+  }
+  const keyLabelPlain=key=>'S'+key.replace(',','');
 
   // tuner-style edit: step the digit at the caret by one unit of ITS decimal
   // place ("1.25" with the caret after the 2 -> 1.35/1.15). Pure textual
@@ -1163,7 +1856,10 @@ const SNP = (function(){
 
   return { FREQ_MULT, parseTouchstone, traceValues, unwrapDeg, nearestIdx, ticks, niceStep, freqUnitFor, fmtNum, mergeSnp, serializeTouchstone, gammaToZ, smithGridGeometry, smithXLabelPoint,
     parseComplex, gammaOfZ, remapGamma, smithYGridGeometry, qCircleGeometry, smithSolve, stepComplexAt, sanSmith,
-    smithReadout, SMITH_HOVER_KEYS, smithUnityCircles };
+    smithReadout, SMITH_HOVER_KEYS, smithUnityCircles,
+    CIRC_LOAD_TOPOS, CIRC_UNITS, CIRC_MAX_POINTS, sanCirc, circuitFromChain, circLoadFromZ, circLoadCheck, circLoadZ,
+    circAbcd, circuitSparams, sweepFreqs, circuitSolve, fmtSI, circuitSchematicSvg, circuitSkrfScript,
+    serializeTouchstonePortZ };
 })();
 if (typeof module!=='undefined' && module.exports) module.exports = SNP;
 //<<PURE_END>>
@@ -2786,8 +3482,8 @@ $('savePdfBtn').onclick=()=>{
 // ---------- modals ----------
 const modalBack=$('modalBack'), modalBox=$('modalBox');
 let modalDownOnBack=false;
-function openModal(html){ modalBox.innerHTML=html; modalBack.hidden=false; }
-function closeModal(){ modalBack.hidden=true; modalBox.innerHTML=''; }
+function openModal(html, cls){ modalBox.className='modal'+(cls?' '+cls:''); modalBox.innerHTML=html; modalBack.hidden=false; }
+function closeModal(){ modalBack.hidden=true; modalBox.innerHTML=''; modalBox.className='modal'; }
 modalBack.addEventListener('mousedown',ev=>{ modalDownOnBack = ev.target===modalBack; });
 modalBack.addEventListener('mouseup',ev=>{
   // both press and release on the backdrop — a text-select drag must not discard the dialog
@@ -3359,6 +4055,7 @@ function renderSmithPanel(){
       +'<button class="sbtn" data-copen="'+ci+'" title="'+(ch.open!==false?'collapse':'expand')+'">'+(ch.open!==false?'▾':'▸')+'</button>'
       +'<input type="text" class="chname" data-cname="'+ci+'" value="'+esc(ch.name)+'" title="list name">'
       +'<button class="sbtn'+(ch.hide?'':' on')+'" data-ceye="'+ci+'" title="show / hide this whole list on the chart">👁</button>'
+      +'<button class="sbtn" data-ccirc="'+ci+'" title="circuit: the schematic of this list + S11 / S21 / S22 vs frequency (scikit-rf script, .s2p)">⏚</button>'
       +'<button class="sbtn" data-cdup="'+ci+'" title="duplicate this list">⧉</button>'
       +'<button class="sbtn" data-cdel="'+ci+'" title="delete this list">✕</button>'
       +(ci===sm.active?'<span class="chz0" title="this list\'s renorm steps drive the chart Z₀">Z₀</span>':'')
@@ -3410,6 +4107,7 @@ function renderSmithPanel(){
   wrap.querySelectorAll('[data-ceye]').forEach(b=>b.onclick=()=>{
     const ch=sm.chains[+b.dataset.ceye]; ch.hide=!ch.hide; renderAll();
   });
+  wrap.querySelectorAll('[data-ccirc]').forEach(b=>b.onclick=()=>openCircuitDialog(+b.dataset.ccirc));
   wrap.querySelectorAll('[data-cdup]').forEach(b=>b.onclick=()=>{
     if (sm.chains.length>=16){ toast('at most 16 lists per tab', false); return; }
     const ci=+b.dataset.cdup, src=sm.chains[ci];
@@ -3593,6 +4291,380 @@ function renderAll(){
 new ResizeObserver(()=>{ if (document.body.contains(svg)) renderPlot(); }).observe($('plotwrap'));
 renderAll();
 
+// ---------- circuit window: a design list as a schematic + S11/S21/S22 vs frequency ----------
+// All of the math is SNP.circuitSolve (pure, tested against scikit-rf); this is presentation.
+const CK_KEYS=[['s11','1,1','S11'], ['s21','2,1','S21'], ['s22','2,2','S22']];
+// S22 DASHED: a lossless network has |S11| = |S22| exactly, and a solid S22 drawn last hid S11
+const ckDash=key=> key==='2,2'? ' stroke-dasharray="7 4"' : '';
+const CK_TOPO_LABEL={ sRC:'series RC', pRC:'parallel RC', sRL:'series RL', pRL:'parallel RL', R:'resistor only' };
+const CK_SCHEM_DARK={ bg:'#0e1626', line:'#c7d2e6', ink:'#dbe4f3', ink2:'#8fa3c0', fill:'#1e3a6e', ref:'#a78bfa' };
+const CK_SCHEM_LIGHT={ bg:'#ffffff', line:'#1f2937', ink:'#111827', ink2:'#6b7280', fill:'#e0e7ff', ref:'#7c3aed' };
+const ckNum=v=> (v==null || !isFinite(v))? '' : String(parseFloat((+v).toPrecision(12)));
+const ckFileBase=ch=> (String(ch.name||'list').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/^_+|_+$/g,'')||'list');
+function ckFmtZ(z, unit){
+  if (!z || !isFinite(z.re) || !isFinite(z.im)) return '—';
+  return SNP.fmtNum(z.re,5)+(z.im<0?' − j':' + j')+SNP.fmtNum(Math.abs(z.im),5)+(unit||' Ω');
+}
+function ckFmtS(re, im){
+  if (!isFinite(re) || !isFinite(im)) return 'undefined';
+  const m=Math.hypot(re,im);
+  return (m>0? SNP.fmtNum(20*Math.log10(m),4)+' dB' : '−∞ dB')+' ∠'+SNP.fmtNum(Math.atan2(im,re)*180/Math.PI,4)+'°';
+}
+function ckModel(ch, res){
+  const c=res.cfg;
+  return { name:ch.name, f0Hz:c.f0, z1:res.z1, unit:c.unit, elements:res.circuit.elements,
+    load:res.load, loadStep:res.circuit.start, ref2:c.ref2, show:c.show, sweep:res.sweep };
+}
+
+function openCircuitDialog(ci){
+  const sm=state.smith, ch=sm.chains[ci];
+  if (!ch) return;
+  ch.circ=SNP.sanCirc(ch.circ);
+  const c=ch.circ;
+  const uOpts=Object.keys(SNP.CIRC_UNITS).map(u=>'<option'+(u===c.unit?' selected':'')+'>'+u+'</option>').join('');
+  const topoOpts=SNP.CIRC_LOAD_TOPOS.map(t=>'<option value="'+t+'">'+CK_TOPO_LABEL[t]+'</option>').join('');
+  openModal(
+    '<h3>circuit — <span id="ckTitle"></span></h3>'
+    +'<p class="ckintro">The list starts at the <b>load</b> (its start point) and walks toward the generator, so port 1 '
+    +'sees the steps in reverse. Every value is defined at <b>f₀</b>: a reactance becomes the L or C that has it there, '
+    +'a line keeps Z₀ and scales θ with f (TEM, lossless). A value typed as <b>Z</b> is R in series with its L/C; '
+    +'typed as <b>Y</b>, R = 1/G in parallel with its C/L.</p>'
+    +'<div class="ckctl">'
+    +'<label title="the frequency at which the list\'s impedances and admittances are defined">f₀ <input type="text" id="ckF0" class="ckn"> '
+    +'<select id="ckUnit" title="frequency unit for every field and axis here">'+uOpts+'</select></label>'
+    +'<label title="port-1 reference impedance — empty = the chart Z₀ at the end of the list">port 1 Z₀ <input type="text" id="ckZ1" class="ckn"> Ω</label>'
+    +'<label>port 2 <select id="ckRef2">'
+    +'<option value="load">= the load (power waves)</option><option value="z0">at Z₀ — network alone</option></select></label>'
+    +'</div>'
+    +'<div class="ckctl">'
+    +'<label title="changing the topology refits R and C/L to the start point at f₀">load <select id="ckTopo">'+topoOpts+'</select></label>'
+    +'<label>R <input type="text" id="ckR" class="ckn"> Ω</label>'
+    +'<label id="ckXlab"><span id="ckXl">C</span> <input type="text" id="ckX" class="ckn"> <span id="ckXu">pF</span></label>'
+    +'<button class="btn ghost mini" id="ckReset" title="refit R and C/L so the load equals the start point at f₀">↺ fit to start point</button>'
+    +'<span id="ckLoadNote" class="cknote"></span>'
+    +'</div>'
+    +'<div id="ckSchem" class="ckschem"></div>'
+    +'<div class="ckctl">'
+    +'<label>sweep <input type="text" id="ckFa" class="ckn"> – <input type="text" id="ckFb" class="ckn"> <span id="ckSwU"></span></label>'
+    +'<label><input type="text" id="ckN" class="ckn" style="width:4.8em"> points</label>'
+    +'<select id="ckLog"><option value="lin">linear</option><option value="log">log</option></select>'
+    +'<span class="ckspacer"></span>'
+    +CK_KEYS.map(([s,key,lab])=>'<button class="sbtn ckshow" data-cks="'+s+'" style="--ckc:'+chipColor(key)+'" title="show / hide '+lab+'">'+lab+'</button>').join('')
+    +'<span class="ckseg">'+[['db','dB'],['deg','phase'],['smith','Smith']].map(([f,lab])=>
+      '<button class="sbtn" data-ckf="'+f+'">'+lab+'</button>').join('')+'</span>'
+    +'</div>'
+    +'<svg id="ckPlot" xmlns="http://www.w3.org/2000/svg"></svg>'
+    +'<div id="ckRead" class="ckread"></div>'
+    +'<div id="ckErr" class="moderr"></div>'
+    +'<div id="ckNotes" class="cknotes"></div>'
+    +'<div class="modbtns">'
+    +'<button class="btn ghost" id="ckS2pNet" title="the matching network alone, BOTH ports referenced to the port-1 Z₀ — standard Touchstone any tool (this one included) reads">⬇ network .s2p</button>'
+    +'<button class="btn ghost" id="ckS2pLoad" title="exactly what is plotted: port 2 referenced to Z_L(f), power waves, one ! Port Impedance line per frequency (scikit-rf / HFSS convention — scikit-rf reads it back exactly; this app refuses it on import)">⬇ as plotted .s2p</button>'
+    +'<button class="btn ghost" id="ckPy" title="a scikit-rf script that builds the same circuit, plots it and writes the Touchstone files">⬇ scikit-rf .py</button>'
+    +'<button class="btn ghost" id="ckSvg" title="the schematic as a standalone SVG (white background)">⬇ schematic .svg</button>'
+    +'<button class="btn" id="ckClose">close</button>'
+    +'</div>', 'wide');
+
+  let res=null, geom=null;
+  const mult=()=>SNP.CIRC_UNITS[c.unit];
+  const fld=id=>$(id);
+  const setVal=(id, v, force)=>{ const el=fld(id); if (force || document.activeElement!==el) el.value=v; };
+  const numIn=(id, ok)=>{                          // a positive number, or null (field marked)
+    const el=fld(id), s=el.value.trim(), v=Number(s);
+    const good= s!=='' && isFinite(v) && ok(v);
+    el.classList.toggle('bad', !good && s!=='');
+    return good? v : null;
+  };
+  const fillFreq=force=>{
+    setVal('ckF0', ckNum(c.f0/mult()), force);
+    const sw= res && res.sweep? res.sweep : { startHz:c.fStart!=null?c.fStart:c.f0/2, stopHz:c.fStop!=null?c.fStop:1.5*c.f0, n:c.n };
+    setVal('ckFa', ckNum(sw.startHz/mult()), force);
+    setVal('ckFb', ckNum(sw.stopHz/mult()), force);
+    setVal('ckN', String(c.n), force);
+    $('ckSwU').textContent=c.unit;
+  };
+  const fillLoad=force=>{
+    if (!res || !res.load) return;
+    const ld=res.load;
+    $('ckTopo').value=ld.topo;
+    const isC= ld.topo==='sRC' || ld.topo==='pRC';
+    $('ckXlab').style.display= ld.topo==='R'? 'none' : '';
+    $('ckXl').textContent= isC? 'C' : 'L';
+    $('ckXu').textContent= isC? 'pF' : 'nH';
+    setVal('ckR', ckNum(ld.R), force);
+    setVal('ckX', isC? ckNum(ld.C!=null? ld.C*1e12 : null) : ckNum(ld.L!=null? ld.L*1e9 : null), force);
+  };
+
+  const refresh=()=>{
+    res=SNP.circuitSolve(ch.steps, sm.z0, c);
+    ch.circ=res.cfg; Object.assign(c, res.cfg);
+    const circ=res.circuit;
+    $('ckTitle').textContent=ch.name+(circ? ' · steps '+(circ.start+1)+'–'+ch.steps.length+' · port 1 → load' : '');
+    $('ckZ1').placeholder= circ? ckNum(circ.z1) : '';
+    $('ckRef2').value=c.ref2;
+    $('ckLog').value= c.log? 'log' : 'lin';
+    document.querySelectorAll('#modalBox [data-cks]').forEach(b=>b.classList.toggle('on', !!c.show[b.dataset.cks]));
+    document.querySelectorAll('#modalBox [data-ckf]').forEach(b=>b.classList.toggle('on', b.dataset.ckf===c.fmt));
+    // load note: fitted / fit failed / edited and no longer the start point
+    const ln=$('ckLoadNote');
+    ln.className='cknote';
+    if (circ){
+      const zs='start point (step '+(circ.start+1)+') = '+ckFmtZ(circ.zLoad0)+' at f₀';
+      if (res.loadErr){ ln.textContent='✗ '+res.loadErr; ln.className='cknote bad'; }
+      else if (res.loadAuto) ln.textContent='fitted: '+zs;
+      else if (res.loadMatchesStart) ln.textContent='edited — still equals the '+zs;
+      else { ln.textContent='edited: Z_L(f₀) = '+ckFmtZ(res.loadAtF0)+' ≠ '+zs; ln.className='cknote warn'; }
+    } else ln.textContent='';
+    // schematic
+    if (circ){
+      const s=SNP.circuitSchematicSvg(ckModel(ch, res), { pal:CK_SCHEM_DARK });
+      $('ckSchem').innerHTML=s.svg;
+    } else $('ckSchem').innerHTML='<div class="empty" style="padding:14px">'+esc(res.error||'')+'</div>';
+    $('ckErr').textContent= res.ok? '' : (res.error||'');
+    $('ckNotes').innerHTML=(res.notes||[]).map(n=>'<div>· '+esc(n)+'</div>').join('')
+      +(res.ok && c.ref2==='z0'? '<div>· port 2 at Z₀: these are the network\'s own S-parameters — S11 is NOT the input match with the load attached</div>' : '');
+    $('ckS2pLoad').style.display= c.ref2==='load'? '' : 'none';
+    for (const id of ['ckS2pNet','ckS2pLoad','ckPy']) $(id).disabled=!res.ok;
+    $('ckSvg').disabled=!circ;
+    drawPlot();
+    staticRead();
+  };
+  const commit=()=>{ refresh(); scheduleAutosave(); };
+
+  const staticRead=()=>{
+    if (!res || !res.ok){ $('ckRead').textContent=''; return; }
+    const a=res.at0, k=0;
+    const parts=['at f₀ = '+SNP.fmtNum(c.f0/mult(),8)+' '+c.unit+':  Z_in = '+ckFmtZ({ re:a.zin.re[k], im:a.zin.im[k] })];
+    for (const [s,key,lab] of CK_KEYS) parts.push(lab+' '+ckFmtS(a.S[key].re[k], a.S[key].im[k]));
+    let chk='';
+    if (res.f0Check) chk= res.f0Check.ok? '  ✓ Z_in equals the chart\'s last point' : '  ✗ internal check: Z_in differs from the chart\'s last point by '+SNP.fmtNum(res.f0Check.dz,3)+' Ω';
+    $('ckRead').textContent=parts.join('   ')+chk;
+  };
+
+  // ---- the plot ----
+  const drawPlot=()=>{
+    const el=$('ckPlot');
+    const r=el.getBoundingClientRect();
+    const W=Math.max(240, Math.round(r.width)), H=Math.max(180, Math.round(r.height));
+    el.setAttribute('viewBox','0 0 '+W+' '+H);
+    geom=null;
+    if (!res || !res.ok){
+      el.innerHTML='<text x="'+W/2+'" y="'+H/2+'" text-anchor="middle" fill="var(--ink3)" style="font-size:12.5px">'+esc(res && res.error || '')+'</text>';
+      return;
+    }
+    const keys=CK_KEYS.filter(k=>c.show[k[0]]);
+    const fHz=res.freqHz, S=res.res.S, a0=res.at0.S;
+    let g='';
+    if (c.fmt==='smith'){
+      const m=16, side=Math.min(W-2*m, H-2*m), R=side/2, cx=W/2, cy=H/2;
+      const gx=re=>cx+re*R, gy=im=>cy-im*R;
+      g+='<defs><clipPath id="ckClipU"><circle cx="'+cx+'" cy="'+cy+'" r="'+R+'"/></clipPath></defs>';
+      const geo=SNP.smithGridGeometry();
+      let gr='';
+      for (const ci2 of geo.circles.concat(geo.arcs))
+        gr+='<circle cx="'+gx(ci2.cx)+'" cy="'+gy(ci2.cy)+'" r="'+(ci2.rad*R)+'" fill="none" stroke="var(--grid)" stroke-width="1"/>';
+      g+='<g clip-path="url(#ckClipU)">'+gr+'<line x1="'+gx(-1)+'" y1="'+cy+'" x2="'+gx(1)+'" y2="'+cy+'" stroke="var(--axis)"/></g>';
+      g+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="var(--axis)" stroke-width="1.2"/>';
+      for (const [s,key] of keys){
+        const col=chipColor(key);
+        let d='', pen=false;
+        for (let k=0;k<fHz.length;k++){
+          const re=S[key].re[k], im=S[key].im[k];
+          if (!isFinite(re)||!isFinite(im)){ pen=false; continue; }
+          d+=(pen?'L':'M')+gx(re).toFixed(2)+' '+gy(im).toFixed(2); pen=true;
+        }
+        g+='<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-linejoin="round"'+ckDash(key)+'/>';
+        const re0=a0[key].re[0], im0=a0[key].im[0];
+        if (isFinite(re0)&&isFinite(im0))
+          g+='<circle cx="'+gx(re0).toFixed(2)+'" cy="'+gy(im0).toFixed(2)+'" r="4.5" fill="none" stroke="'+col+'" stroke-width="1.8"/>';
+      }
+      g+='<text x="'+(m)+'" y="'+(m+4)+'" style="font-size:10.5px" fill="var(--ink3)">○ = f₀ · Z₀ grid = port 1 ('+SNP.fmtNum(res.z1,5)+' Ω)</text>';
+      geom={ mode:'smith', gx, gy };
+    } else {
+      const ml=60, mr=16, mt=14, mb=38, w=W-ml-mr, h=H-mt-mb;
+      const lg=c.log;
+      const x0=fHz[0], x1=fHz[fHz.length-1];
+      const xp= lg? f=>ml+Math.log(f/x0)/Math.log(x1/x0)*w : f=>ml+(f-x0)/(x1-x0)*w;
+      const ys=keys.map(([s,key])=>SNP.traceValues(S[key], c.fmt==='db'? 'db' : 'deg'));
+      let y0, y1, yt;
+      if (c.fmt==='deg'){ y0=-180; y1=180; yt=[-180,-135,-90,-45,0,45,90,135,180]; }
+      else {
+        let lo=Infinity, hi=-Infinity;
+        for (const y of ys) for (const v of y) if (isFinite(v)){ if (v<lo) lo=v; if (v>hi) hi=v; }
+        if (!isFinite(lo)){ lo=-40; hi=0; }
+        hi=Math.max(hi, -0.5); lo=Math.max(lo, hi-100);
+        if (hi-lo<1){ lo-=0.5; hi+=0.5; }
+        const pad=(hi-lo)*0.06; y0=lo-pad; y1=hi+pad;
+        yt=SNP.ticks(y0, y1, Math.max(3, Math.round(h/48)));
+      }
+      const yp=v=>mt+(y1-v)/(y1-y0)*h;
+      let xt;
+      if (lg){
+        xt=[];
+        for (let e=Math.floor(Math.log10(x0)); e<=Math.ceil(Math.log10(x1)); e++)
+          for (const mm of [1,2,5]){ const v=mm*Math.pow(10,e); if (v>=x0*(1-1e-12) && v<=x1*(1+1e-12)) xt.push(v); }
+      } else xt=SNP.ticks(x0, x1, Math.max(3, Math.round(w/100)));
+      g+='<defs><clipPath id="ckClipR"><rect x="'+ml+'" y="'+mt+'" width="'+w+'" height="'+h+'"/></clipPath></defs>';
+      for (const v of xt){ const X=xp(v); g+='<line x1="'+X+'" y1="'+mt+'" x2="'+X+'" y2="'+(mt+h)+'" stroke="var(--grid)"/>'
+        +'<text x="'+X+'" y="'+(mt+h+15)+'" text-anchor="middle">'+SNP.fmtNum(v/mult(),6)+'</text>'; }
+      for (const v of yt){ const Y=yp(v); g+='<line x1="'+ml+'" y1="'+Y+'" x2="'+(ml+w)+'" y2="'+Y+'" stroke="var(--grid)"/>'
+        +'<text x="'+(ml-7)+'" y="'+(Y+3.5)+'" text-anchor="end">'+SNP.fmtNum(v,5)+'</text>'; }
+      g+='<rect x="'+ml+'" y="'+mt+'" width="'+w+'" height="'+h+'" fill="none" stroke="var(--axis)"/>';
+      g+='<text class="axislabel" x="'+(ml+w/2)+'" y="'+(H-6)+'" text-anchor="middle">Frequency ('+c.unit+')'+(lg?' — log':'')+'</text>';
+      g+='<text class="axislabel" x="13" y="'+(mt+h/2)+'" text-anchor="middle" transform="rotate(-90 13 '+(mt+h/2)+')">'
+        +(c.fmt==='db'? '|S| (dB)' : 'phase (°)')+'</text>';
+      if (c.f0>=x0 && c.f0<=x1){
+        const X=xp(c.f0);
+        g+='<line x1="'+X+'" y1="'+mt+'" x2="'+X+'" y2="'+(mt+h)+'" stroke="var(--ink3)" stroke-dasharray="4 4"/>'
+          +'<text x="'+(X+4)+'" y="'+(mt+12)+'" fill="var(--ink3)" style="font-size:10.5px">f₀</text>';
+      }
+      let tp='';
+      keys.forEach(([s,key],i)=>{
+        const y=ys[i], col=chipColor(key);
+        let d='', pen=false;
+        for (let k=0;k<fHz.length;k++){
+          const v=y[k];
+          if (!isFinite(v)){ pen=false; continue; }
+          d+=(pen?'L':'M')+xp(fHz[k]).toFixed(2)+' '+yp(v).toFixed(2); pen=true;
+        }
+        tp+='<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-linejoin="round"'+ckDash(key)+'/>';
+      });
+      g+='<g clip-path="url(#ckClipR)">'+tp+'</g>';
+      geom={ mode:'xy', xp, yp, ml, w, mt, h, x0, x1, lg, ys };
+    }
+    // legend
+    keys.forEach(([s,key,lab],i)=>{
+      const X=W-16-(keys.length-i)*52, Y=c.fmt==='smith'? 20 : 28;
+      g+='<line x1="'+X+'" y1="'+Y+'" x2="'+(X+16)+'" y2="'+Y+'" stroke="'+chipColor(key)+'" stroke-width="2.4"'+ckDash(key)+'/>'
+        +'<text x="'+(X+20)+'" y="'+(Y+4)+'" class="legendtext">'+lab+'</text>';
+    });
+    if (!keys.length) g+='<text x="'+W/2+'" y="'+H/2+'" text-anchor="middle" fill="var(--ink3)">no trace selected — switch S11 / S21 / S22 on</text>';
+    el.innerHTML=g+'<g id="ckHov"></g>';
+  };
+
+  // ---- hover: the nearest SAMPLE (never interpolated) ----
+  const plotEl=$('ckPlot');
+  plotEl.addEventListener('mousemove',ev=>{
+    if (!geom || !res || !res.ok) return;
+    const r=plotEl.getBoundingClientRect(), vb=plotEl.viewBox.baseVal;
+    const sc=Math.min(r.width/vb.width, r.height/vb.height);
+    const ox=(r.width-vb.width*sc)/2, oy=(r.height-vb.height*sc)/2;
+    const mx=(ev.clientX-r.left-ox)/sc, my=(ev.clientY-r.top-oy)/sc;
+    const fHz=res.freqHz, S=res.res.S;
+    const keys=CK_KEYS.filter(k=>c.show[k[0]]);
+    let k=-1, hov='';
+    if (geom.mode==='xy'){
+      if (mx<geom.ml || mx>geom.ml+geom.w){ $('ckHov').innerHTML=''; staticRead(); return; }
+      const t=(mx-geom.ml)/geom.w;
+      const f= geom.lg? geom.x0*Math.pow(geom.x1/geom.x0, t) : geom.x0+t*(geom.x1-geom.x0);
+      k=SNP.nearestIdx(fHz, f);
+      const X=geom.xp(fHz[k]);
+      hov='<line x1="'+X+'" y1="'+geom.mt+'" x2="'+X+'" y2="'+(geom.mt+geom.h)+'" stroke="var(--ink2)" stroke-width="1"/>';
+      keys.forEach(([s,key],i)=>{ const v=geom.ys[i][k];
+        if (isFinite(v)) hov+='<circle cx="'+X+'" cy="'+geom.yp(v)+'" r="3.5" fill="'+chipColor(key)+'"/>'; });
+    } else {
+      let best=Infinity;
+      for (const [s,key] of keys) for (let q=0;q<fHz.length;q++){
+        const re=S[key].re[q], im=S[key].im[q];
+        if (!isFinite(re)||!isFinite(im)) continue;
+        const d=(geom.gx(re)-mx)**2+(geom.gy(im)-my)**2;
+        if (d<best){ best=d; k=q; }
+      }
+      if (k<0 || best>40*40){ $('ckHov').innerHTML=''; staticRead(); return; }
+      for (const [s,key] of keys){ const re=S[key].re[k], im=S[key].im[k];
+        if (isFinite(re)&&isFinite(im)) hov+='<circle cx="'+geom.gx(re)+'" cy="'+geom.gy(im)+'" r="5" fill="none" stroke="'+chipColor(key)+'" stroke-width="2"/>'; }
+    }
+    $('ckHov').innerHTML=hov;
+    const parts=['f = '+SNP.fmtNum(fHz[k]/mult(),8)+' '+c.unit+':  Z_in = '+ckFmtZ({ re:res.res.zin.re[k], im:res.res.zin.im[k] })];
+    for (const [s,key,lab] of CK_KEYS) parts.push(lab+' '+ckFmtS(S[key].re[k], S[key].im[k]));
+    $('ckRead').textContent=parts.join('   ');
+  });
+  plotEl.addEventListener('mouseleave',()=>{ const h=$('ckHov'); if (h) h.innerHTML=''; staticRead(); });
+
+  // ---- inputs ----
+  $('ckF0').addEventListener('input',()=>{ const v=numIn('ckF0', x=>x>0); if (v!=null){ c.f0=v*mult(); commit(); fillLoad(); } });
+  $('ckUnit').addEventListener('change',()=>{ c.unit=$('ckUnit').value; commit(); fillFreq(true); });
+  $('ckZ1').addEventListener('input',()=>{
+    const s=$('ckZ1').value.trim();
+    if (s===''){ $('ckZ1').classList.remove('bad'); c.z1=null; commit(); return; }
+    const v=numIn('ckZ1', x=>x>0); if (v!=null){ c.z1=v; commit(); }
+  });
+  $('ckRef2').addEventListener('change',()=>{ c.ref2=$('ckRef2').value==='z0'? 'z0' : 'load'; commit(); });
+  $('ckTopo').addEventListener('change',()=>{ c.loadTopo=$('ckTopo').value; c.loadAuto=true; commit(); fillLoad(true); });
+  const takeOver=()=>{                             // first edit of a fitted load: start from the fit
+    if (!c.loadAuto) return;
+    const ld=res && res.load;
+    c.loadTopo= ld? ld.topo : $('ckTopo').value;
+    c.loadR= ld? ld.R : null; c.loadC= ld? ld.C : null; c.loadL= ld? ld.L : null;
+    c.loadAuto=false;
+  };
+  $('ckR').addEventListener('input',()=>{ const v=numIn('ckR', x=>x>=0); if (v!=null){ takeOver(); c.loadR=v; commit(); } });
+  $('ckX').addEventListener('input',()=>{
+    const v=numIn('ckX', x=>x>0); if (v==null) return;
+    takeOver();
+    if (c.loadTopo==='sRC' || c.loadTopo==='pRC') c.loadC=v*1e-12; else c.loadL=v*1e-9;
+    commit();
+  });
+  $('ckReset').onclick=()=>{ c.loadAuto=true; commit(); fillLoad(true); };
+  $('ckFa').addEventListener('input',()=>{ const v=numIn('ckFa', x=>x>0); if (v!=null){ c.fStart=v*mult(); if (c.fStop==null) c.fStop=res&&res.sweep? res.sweep.stopHz : 1.5*c.f0; commit(); } });
+  $('ckFb').addEventListener('input',()=>{ const v=numIn('ckFb', x=>x>0); if (v!=null){ c.fStop=v*mult(); if (c.fStart==null) c.fStart=res&&res.sweep? res.sweep.startHz : c.f0/2; commit(); } });
+  $('ckN').addEventListener('input',()=>{ const v=numIn('ckN', x=>Number.isInteger(x) && x>=2 && x<=20001); if (v!=null){ c.n=v; commit(); } });
+  $('ckLog').addEventListener('change',()=>{ c.log= $('ckLog').value==='log'; commit(); });
+  document.querySelectorAll('#modalBox [data-cks]').forEach(b=>b.onclick=()=>{ c.show[b.dataset.cks]=!c.show[b.dataset.cks]; commit(); });
+  document.querySelectorAll('#modalBox [data-ckf]').forEach(b=>b.onclick=()=>{ c.fmt=b.dataset.ckf; commit(); });
+
+  // ---- downloads ----
+  const base=ckFileBase(ch);
+  const header=()=>{
+    const ld=res.load, m=ckModel(ch, res);
+    const h=['S-Param Studio circuit MODEL of design list "'+ch.name+'" — computed, not measured',
+      'values defined at f0 = '+res.cfg.f0+' Hz; reactances as L/C, lines TEM lossless (theta proportional to f)',
+      'network, port 1 -> load:'];
+    for (const e of m.elements){
+      if (e.type==='line') h.push('  step '+(e.step+1)+': line Z0 = '+e.z0+' ohm, '+e.deg+' deg at f0');
+      else h.push('  step '+(e.step+1)+': '+e.type+' ('+(e.form==='z'?'Z: R in series':'Y: R in parallel')+')'
+        +(e.R!=null?'  R = '+e.R+' ohm':'')+(e.L!=null?'  L = '+e.L+' H':'')+(e.C!=null?'  C = '+e.C+' F':''));
+    }
+    h.push('load ('+CK_TOPO_LABEL[ld.topo]+'):  R = '+ld.R+' ohm'+(ld.C!=null?'  C = '+ld.C+' F':'')+(ld.L!=null?'  L = '+ld.L+' H':''));
+    return h;
+  };
+  $('ckS2pNet').onclick=()=>{
+    if (!res || !res.ok) return;
+    const net=SNP.circuitSparams(res.circuit, res.load, res.z1, res.freqHz, 'z0');
+    if (net.singular){ toast('✗ the network is singular at '+net.singular+' point(s) — no .s2p written', false); return; }
+    const text=SNP.serializeTouchstone({ nPorts:2, z0:res.z1, freqHz:res.freqHz, S:net.S },
+      { comments:header().concat(['this file: the network ALONE, both ports referenced to '+res.z1+' ohm (the load is NOT included)']) });
+    const back=SNP.parseTouchstone(base+'_network.s2p', text);
+    if (!back.ok || back.points!==res.freqHz.length){ toast('✗ internal: the .s2p did not re-parse ('+(back.error||'points')+')', true); return; }
+    saveTextFile(base+'_network.s2p', text);
+  };
+  $('ckS2pLoad').onclick=()=>{
+    if (!res || !res.ok || c.ref2!=='load') return;
+    const n=res.freqHz.length;
+    const p1={ re:new Float64Array(n).fill(res.z1), im:new Float64Array(n) };
+    try {
+      const text=SNP.serializeTouchstonePortZ(res.freqHz, res.res.S, [p1, res.res.zref2],
+        header().concat(['this file: port 2 referenced to Z_L(f) (power waves); per-frequency port impedances below each line']));
+      saveTextFile(base+'_load_ref.s2p', text);
+    } catch(e){ toast('✗ not written: '+((e&&e.message)||e), false); }
+  };
+  $('ckPy').onclick=()=>{
+    if (!res || !res.ok) return;
+    try { saveTextFile(base+'_circuit.py', SNP.circuitSkrfScript(ckModel(ch, res))); }
+    catch(e){ toast('✗ script not written: '+((e&&e.message)||e), false); }
+  };
+  $('ckSvg').onclick=()=>{
+    if (!res || !res.circuit) return;
+    saveTextFile(base+'_schematic.svg', SNP.circuitSchematicSvg(ckModel(ch, res), { pal:CK_SCHEM_LIGHT }).svg);
+  };
+  $('ckClose').onclick=closeModal;
+
+  refresh();
+  fillFreq(true);
+  fillLoad(true);
+  drawPlot();                                      // the plot box has its final size now
+}
+
 // test / automation hook — same code paths as the UI
 window.SNPApp={
   SNP, state, loadText, removeFile, toggleSel, cycleSel, renderAll, renderPlot,
@@ -3604,7 +4676,7 @@ window.SNPApp={
   plotToPngBlob, plotToPdfBlob,
   cycleDash, setFileLabel:(fid,label)=>{ const f=fileById(fid); if (f){ f.label=label||null; renderAll(); } },
   addTab, switchTab, closeTab, dupTab, curTab, buildProject, saveProject, loadProjectText, setSidebarWidth,
-  newProject, autosaveNow, idbGet, idbDel, renderSmithPanel, sanSmith,
+  newProject, autosaveNow, idbGet, idbDel, renderSmithPanel, sanSmith, openCircuitDialog,
 };
 })();
 </script>
